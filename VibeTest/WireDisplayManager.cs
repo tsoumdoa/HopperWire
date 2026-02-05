@@ -6,8 +6,8 @@ namespace VibeTest
     public class WireDisplayManager : GH_Component
     {
         private WireMonitor _wireMonitor;
-        private double _lastFaintThreshold = 100.0;
-        private double _lastHiddenThreshold = 200.0;
+        private double _lastFaintThreshold = 300.0;
+        private double _lastHiddenThreshold = 900.0;
         private bool _lastDebug = false;
         private bool _lastRefresh = false;
 
@@ -20,8 +20,8 @@ namespace VibeTest
 
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, 100.0);
-            pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, 200.0);
+            pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, 300.0);
+            pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, 900.0);
             pManager.AddBooleanParameter("Refresh", "Refresh", "Click to refresh wire displays (toggle to refresh)", GH_ParamAccess.item, false);
             pManager.AddBooleanParameter("Debug", "Debug", "Enable debug logging", GH_ParamAccess.item, false);
         }
@@ -34,8 +34,8 @@ namespace VibeTest
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            double faintThreshold = 100.0;
-            double hiddenThreshold = 200.0;
+            double faintThreshold = 800;
+            double hiddenThreshold = 1500;
             bool refresh = false;
             bool debug = false;
 
@@ -68,7 +68,7 @@ namespace VibeTest
             {
                 var wireCount = _wireMonitor.GetWireCount();
                 var modifiedCount = _wireMonitor.GetModifiedCount();
-                status = $"Processed {wireCount} wires, {modifiedCount} modified (Faint > {faintThreshold:F1}px, Hidden > {hiddenThreshold:F1}px)";
+                status = $"Processed {wireCount} wires, {modifiedCount} modified";
             }
             
             DA.SetData(0, status);

@@ -46,12 +46,14 @@ namespace VibeTest
             var currentWires = new Dictionary<Guid, GH_ParamWireDisplay>();
             _wireCount = 0;
             _modifiedCount = 0;
+            
+            var processedConnections = new HashSet<string>();
 
             foreach (var obj in _document.Objects)
             {
                 if (obj is IGH_Param param)
                 {
-                    ProcessParameter(param, currentWires);
+                    ProcessParameter(param, currentWires, processedConnections);
                 }
             }
 
@@ -78,7 +80,7 @@ namespace VibeTest
             
             if (_debug)
             {
-                Log($"Processed {_wireCount} wires");
+                Log($"Processed {_wireCount} unique wires");
                 Log($"  Modified: {_modifiedCount} wires");
             }
         }
@@ -120,70 +122,100 @@ namespace VibeTest
             }
         }
 
-        private void ProcessParameter(IGH_Param param, Dictionary<Guid, GH_ParamWireDisplay> currentWires)
+        private void ProcessParameter(IGH_Param param, Dictionary<Guid, GH_ParamWireDisplay> currentWires, HashSet<string> processedConnections)
         {
-            if (param == null || param.SourceCount == 0) return;
+            if (param == null) return;
 
-            var currentMode = param.WireDisplay;
-
-            for (int i = 0; i < param.SourceCount; i++)
+            if (param.SourceCount > 0)
             {
-                var source = param.Sources[i];
-                if (source == null) continue;
-
-                double length = CalculateWireLength(source, param);
-                _wireCount++;
-
-                GH_ParamWireDisplay targetMode;
-
-                if (length > _hiddenThreshold)
+                for (int i = 0; i < param.SourceCount; i++)
                 {
-                    targetMode = GH_ParamWireDisplay.hidden;
-                    if (_debug)
+                    var source = param.Sources[i];
+                    if (source == null) continue;
+
+                    var connectionId = GetConnectionId(source, param);
+                    
+                    if (processedConnections.Contains(connectionId))
                     {
-                        Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
+                        if (_debug)
+                        {
+                            Log($"  Skipping duplicate wire: {source.NickName} -> {param.NickName}");
+                        }
+                        continue;
                     }
-                }
-                else if (length > _faintThreshold)
-                {
-                    targetMode = GH_ParamWireDisplay.faint;
-                    if (_debug)
-                    {
-                        Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
-                    }
-                }
-                else
-                {
-                    targetMode = currentMode;
-                    if (_modifiedWires.ContainsKey(param.InstanceGuid) && _debug)
-                    {
-                        Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px <= {_faintThreshold:F1}px = RESTORE");
-                    }
-                }
 
-                if (targetMode != currentMode)
-                {
-                    if (targetMode == GH_ParamWireDisplay.hidden || targetMode == GH_ParamWireDisplay.faint)
+                    processedConnections.Add(connectionId);
+                    double length = CalculateWireLength(source, param);
+                    _wireCount++;
+
+                    // Determine target display mode based on length
+                    GH_ParamWireDisplay targetMode;
+                    bool shouldApplyChange = false;
+
+                    if (length > _hiddenThreshold)
+                    {
+                        targetMode = GH_ParamWireDisplay.hidden;
+                        shouldApplyChange = (param.WireDisplay != GH_ParamWireDisplay.hidden);
+                        if (_debug)
+                        {
+                            Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
+                        }
+                    }
+                    else if (length > _faintThreshold)
+                    {
+                        targetMode = GH_ParamWireDisplay.faint;
+                        shouldApplyChange = (param.WireDisplay != GH_ParamWireDisplay.faint);
+                        if (_debug)
+                        {
+                            Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
+                        }
+                    }
+                    else
+                    {
+                        // Wire is under faint threshold - should be DEFAULT
+                        targetMode = (GH_ParamWireDisplay)0; // Use 0 to avoid 'default' keyword
+                        shouldApplyChange = (param.WireDisplay != (GH_ParamWireDisplay)0);
+                        if (_debug)
+                        {
+                            Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px <= {_faintThreshold:F1}px = DEFAULT");
+                        }
+                    }
+
+                    // Apply change if needed
+                    if (shouldApplyChange)
                     {
                         if (!_modifiedWires.ContainsKey(param.InstanceGuid))
                         {
-                            SetWireDisplay(param, targetMode, currentMode);
-                            currentWires[param.InstanceGuid] = currentMode;
+                            // First time modifying this param - save original mode
+                            SetWireDisplay(param, targetMode, param.WireDisplay);
+                            currentWires[param.InstanceGuid] = param.WireDisplay;
                             _modifiedCount++;
+                        }
+                        else
+                        {
+                            // Param was already modified - restore to its original mode
+                            var originalMode = _modifiedWires[param.InstanceGuid];
+                            
+                            // Only restore if we're changing away from what we set
+                            if (param.WireDisplay != targetMode)
+                            {
+                                RestoreWireDisplay(param, originalMode);
+                            }
                         }
                     }
                     else if (_modifiedWires.ContainsKey(param.InstanceGuid))
                     {
+                        // Wire already has correct display, remove from tracking
                         var originalMode = _modifiedWires[param.InstanceGuid];
                         RestoreWireDisplay(param, originalMode);
                     }
                 }
-                else if (_modifiedWires.ContainsKey(param.InstanceGuid))
-                {
-                    var originalMode = _modifiedWires[param.InstanceGuid];
-                    RestoreWireDisplay(param, originalMode);
-                }
             }
+        }
+
+        private string GetConnectionId(IGH_Param source, IGH_Param target)
+        {
+            return $"{source.InstanceGuid}_{target.InstanceGuid}";
         }
 
         private double CalculateWireLength(IGH_Param source, IGH_Param target)

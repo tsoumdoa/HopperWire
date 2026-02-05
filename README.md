@@ -17,8 +17,8 @@ A Grasshopper plugin that manually triggers wire display updates based on length
 ### Wire Display Manager
 - **Category**: VibeTest > Display
 - **Inputs**:
-  - `Faint Threshold` (Number): Wire length threshold for faint display in pixels (default: 100)
-  - `Hidden Threshold` (Number): Wire length threshold for hidden display in pixels (default: 200)
+  - `Faint Threshold` (Number): Wire length threshold for faint display in pixels (default: 300)
+  - `Hidden Threshold` (Number): Wire length threshold for hidden display in pixels (default: 900)
   - `Refresh` (Boolean): **Click this button to refresh wire displays!** (toggle to refresh)
   - `Debug` (Boolean): Enable debug logging (default: false)
 - **Outputs**:
@@ -28,23 +28,24 @@ A Grasshopper plugin that manually triggers wire display updates based on length
 ## How It Works
 
 1. Place **Wire Display Manager** component on your Grasshopper canvas
-2. Set **Faint Threshold** for when wires should become faint
-3. Set **Hidden Threshold** for when wires should be completely hidden
+2. Set **Faint Threshold** (default: 300px) for when wires should become faint
+3. Set **Hidden Threshold** (default: 900px) for when wires should be completely hidden
 4. Optional: Set **Debug** to true for detailed logging
-5. **Click the Refresh button** (toggle false → true) to process all wires!
+5. **Click Refresh button** (toggle false → true) to process all wires!
 6. The component will:
    - Scan all wire connections in document
    - Calculate straight-line distance between connected component centers
-   - Set wires exceeding hidden threshold to "Hidden" display
-   - Set wires exceeding faint threshold (but not hidden) to "Faint" display
+   - **Length ≤ 300px**: Normal display (default thickness)
+   - **300px < Length ≤ 900px**: Set to "Faint" display
+   - **Length > 900px**: Set to "Hidden" display
    - Record all changes for undo/redo
 7. Move components, add new ones, then **click Refresh again** to update!
 
 ## Display Modes
 
-- **Default** (length ≤ faint threshold): Normal wire display
-- **Faint** (faint threshold < length ≤ hidden threshold): Thin, transparent wires
-- **Hidden** (length > hidden threshold): Wires completely invisible
+- **Default** (length ≤ 300px): Normal wire display with default thickness ✅ NOW RESTORES CORRECTLY
+- **Faint** (300px < length ≤ 900px): Thin, transparent wires
+- **Hidden** (length > 900px): Wires completely invisible
 
 ## Using the Refresh Button
 
@@ -82,11 +83,15 @@ Example debug output:
 
 ## Technical Details
 
+- **Wire Detection**: Scans ALL parameter connections in the document (sources and recipients)
+- **Duplicate Prevention**: Uses unique connection IDs to avoid processing same wire twice
+- **Proper Restoration**: Correctly restores wires to default display when below threshold ✅ FIXED
 - **Wire Length Calculation**: Straight-line distance between parameter centers (pixels)
-- **Display Modes**: Uses `GH_ParamWireDisplay.faint` and `GH_ParamWireDisplay.hidden`
+- **Display Modes**: Uses `GH_ParamWireDisplay.faint` and `GH_ParamWireDisplay.hidden` and `GH_ParamWireDisplay.default`
 - **Manual Trigger**: No event listening - just click Refresh to process!
 - **Undo/Redo**: Uses built-in `GH_WireDisplayAction` for proper undo support
 - **Performance**: Process on-demand only - no background monitoring overhead
+- **Debug Mode**: Shows all wire processing including default restoration in log when enabled
 
 ## Building
 
@@ -117,15 +122,15 @@ The build will produce `.gha` files for each target framework:
 ┌───────────────────────────┐
 │   Wire Display Manager    │
 ├───────────────────────────┤
-│ Faint Threshold: 100      │
-│ Hidden Threshold: 200     │
+│ Faint Threshold: 300      │
+│ Hidden Threshold: 900     │
 │ Refresh: [false] → [true] │ ← Click this!
 │ Debug: false             │
 ├───────────────────────────┤
 │ Status: Processed 8      │
 │ wires, 3 modified         │
-│ (Faint > 100.0px,        │
-│ Hidden > 200.0px)          │
+│ (Faint > 300.0px,        │
+│ Hidden > 900.0px)          │
 ├───────────────────────────┤
 │ Log:                     │
 │ (empty when debug off)   │
@@ -154,10 +159,10 @@ The build will produce `.gha` files for each target framework:
 ## Threshold Guidelines
 
 Recommended threshold values (pixels):
-- **Faint**: 100-150 pixels - Good for medium-sized definitions
-- **Hidden**: 200-300 pixels - For very long connections that cross large canvas areas
-- **Large definitions**: Increase thresholds to 200-400 pixels
-- **Compact definitions**: Decrease to 50-100 pixels
+- **Faint**: 200-400 pixels - Good for medium to large-sized definitions (default: 300)
+- **Hidden**: 600-1200 pixels - For very long connections that cross large canvas areas (default: 900)
+- **Large definitions**: Increase thresholds to 400-800 for faint, 1000-1500 for hidden
+- **Compact definitions**: Decrease to 100-200 for faint, 300-500 for hidden
 
 ## Tips
 
