@@ -70,20 +70,13 @@ Debug messages are:
 
 Example debug output:
 ```
-[14:32:15.123] WireMonitor created (manual trigger mode)
-[14:32:15.124]   Faint Threshold: 300.0 pixels
-[14:32:15.125]   Hidden Threshold: 900.0 pixels
-[14:32:15.126]   Debug Mode: True
 [14:32:15.127] Document has 45 objects
 [14:32:15.128]   Objects by type:
 [14:32:15.129]     Components: 12
 [14:32:15.130]     Parameters: 33
-[14:32:15.131]   Skipping parameter Faint (excluded)
-[14:32:15.132]   Skipping parameter Hidden (excluded)
-[14:32:15.133]   Skipping parameter Refresh (excluded)
-[14:32:15.134]   Skipping parameter Debug (excluded)
-[14:32:15.789] Processed 15 unique wires
-[14:32:15.790]   Modified: 5 wires
+[14:32:15.131] Collected 30 unique connections
+[14:32:15.789] Processed 30 unique connections
+[14:32:15.790]   Modified: 5 connections
 [14:32:15.791]   Wire Number -> Curve: 950.5px > 900.0px = HIDDEN
 [14:32:15.792]   Wire Point -> List: 350.3px > 300.0px = FAINT
 [14:32:15.793]   Wire List -> Panel: 180.7px > 300.0px = FAINT
@@ -91,8 +84,8 @@ Example debug output:
 
 ## Technical Details
 
-- **Comprehensive Connection Detection**: Thoroughly scans ALL parameters in document and processes ALL their source connections ✅ IMPROVED
-- **Proper Component Exclusion**: Searches through all components to find and exclude plugin's own parameters accurately ✅ FIXED
+- **Comprehensive Connection Detection**: Collects ALL unique source->target connections from ALL parameters ✅ IMPROVED
+- **NO Exclusion**: Now processes ALL wires including plugin's own inputs ✅ CHANGED
 - **Duplicate Prevention**: Uses unique connection IDs to avoid processing same wire twice
 - **Proper Restoration**: Correctly restores wires to default display when below threshold
 - **Wire Length Calculation**: Straight-line distance between parameter centers (pixels)
@@ -100,7 +93,7 @@ Example debug output:
 - **Manual Trigger**: No event listening - just click Refresh to process!
 - **Undo/Redo**: Uses built-in `GH_WireDisplayAction` for proper undo support
 - **Performance**: Process on-demand only - no background monitoring overhead
-- **Debug Mode**: Shows detailed information about document structure, excluded parameters, and all wire processing when enabled
+- **Debug Mode**: Shows detailed information about all connections found and document structure when enabled
 
 ## Building
 
@@ -192,8 +185,7 @@ Recommended threshold values (pixels):
 ## Notes
 
 - Wire length is calculated as straight-line distance between component centers
-- Only affects wire display, does not affect component functionality
-- **Plugin's own input wires are excluded from processing** to avoid interference
+- **ALL wires are now processed**, including plugin's own inputs - no exclusions!
 - Hidden wires are completely invisible (not shown even when selected)
 - All display changes are recorded for undo/redo
 - Debug logging writes to both output parameter and Rhino command history

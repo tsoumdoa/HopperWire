@@ -54,7 +54,7 @@ namespace VibeTest
             {
                 if (OnPingDocument() == null) return;
                 
-                _wireMonitor = new WireMonitor(OnPingDocument(), faintThreshold, hiddenThreshold, debug, this.InstanceGuid);
+                _wireMonitor = new WireMonitor(OnPingDocument(), faintThreshold, hiddenThreshold, debug);
                 _wireMonitor.ProcessAllWires();
             }
 

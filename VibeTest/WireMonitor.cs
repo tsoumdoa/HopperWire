@@ -11,7 +11,6 @@ namespace VibeTest
     public class WireMonitor
     {
         private GH_Document _document;
-        private Guid _excludeComponentGuid;
         private double _faintThreshold;
         private double _hiddenThreshold;
         private bool _debug;
@@ -20,10 +19,9 @@ namespace VibeTest
         private int _wireCount;
         private int _modifiedCount;
 
-        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, bool debug, Guid excludeComponentGuid = default(Guid))
+        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, bool debug)
         {
             _document = document;
-            _excludeComponentGuid = excludeComponentGuid;
             _faintThreshold = faintThreshold;
             _hiddenThreshold = hiddenThreshold;
             _debug = debug;
@@ -38,10 +36,6 @@ namespace VibeTest
                 Log($"  Faint Threshold: {_faintThreshold:F1} pixels");
                 Log($"  Hidden Threshold: {_hiddenThreshold:F1} pixels");
                 Log($"  Debug Mode: {_debug}");
-                if (_excludeComponentGuid != Guid.Empty)
-                {
-                    Log($"  Excluding component: {_excludeComponentGuid}");
-                }
             }
         }
 
@@ -54,6 +48,9 @@ namespace VibeTest
             _modifiedCount = 0;
             
             var processedConnections = new HashSet<string>();
+            
+            // Collect ALL unique connections (source -> target pairs)
+            var allConnections = new List<KeyValuePair<IGH_Param, IGH_Param>>();
             
             if (_debug)
             {
@@ -72,23 +69,35 @@ namespace VibeTest
                 Log($"    Parameters: {paramCount}");
             }
 
-            // THOROUGH APPROACH: Process ALL parameters and their sources
-            // Each connection is represented once from the target parameter's perspective
+            // THOROUGH APPROACH: Collect ALL unique connections first
             foreach (var obj in _document.Objects)
             {
                 if (obj is IGH_Param param)
                 {
-                    if (ShouldExcludeParameter(param))
+                    // Add all incoming connections (wires TO this parameter)
+                    if (param.SourceCount > 0)
                     {
-                        if (_debug)
+                        for (int i = 0; i < param.SourceCount; i++)
                         {
-                            Log($"  Skipping parameter {param.NickName} (excluded)");
+                            var source = param.Sources[i];
+                            if (source != null)
+                            {
+                                allConnections.Add(new KeyValuePair<IGH_Param, IGH_Param>(param, source));
+                            }
                         }
-                        continue;
                     }
-                    
-                    ProcessParameter(param, currentWires, processedConnections);
                 }
+            }
+            
+            if (_debug)
+            {
+                Log($"Collected {allConnections.Count} unique connections");
+            }
+
+            // Now process each unique connection
+            foreach (var kvp in allConnections)
+            {
+                ProcessConnection(kvp.Key, kvp.Value, currentWires, processedConnections);
             }
 
             var wiresToRestore = new List<KeyValuePair<Guid, GH_ParamWireDisplay>>();
@@ -114,8 +123,8 @@ namespace VibeTest
             
             if (_debug)
             {
-                Log($"Processed {_wireCount} unique wires");
-                Log($"  Modified: {_modifiedCount} wires");
+                Log($"Processed {_wireCount} unique connections");
+                Log($"  Modified: {_modifiedCount} connections");
             }
         }
 
@@ -156,126 +165,76 @@ namespace VibeTest
             }
         }
 
-        private bool ShouldExcludeParameter(IGH_Param param)
+        private void ProcessConnection(IGH_Param target, IGH_Param source, Dictionary<Guid, GH_ParamWireDisplay> currentWires, HashSet<string> processedConnections)
         {
-            // Check if parameter belongs to the Wire Display Manager component
-            if (_excludeComponentGuid == Guid.Empty)
-                return false;
-
-            // Check if this parameter is part of the excluded component
-            // by searching through all components and checking their parameters
-            foreach (var obj in _document.Objects)
+            var connectionId = GetConnectionId(source, target);
+            
+            if (processedConnections.Contains(connectionId))
             {
-                if (obj is IGH_Component comp && comp.InstanceGuid == _excludeComponentGuid)
+                if (_debug)
                 {
-                    // Check if this param is one of the component's input or output params
-                    var componentParams = comp.Params;
-                    foreach (var p in componentParams)
-                    {
-                        if (p.InstanceGuid == param.InstanceGuid)
-                        {
-                            if (_debug)
-                            {
-                                Log($"  Parameter {param.NickName} belongs to excluded component {comp.Name}");
-                            }
-                            return true;
-                        }
-                    }
+                    Log($"  Skipping duplicate wire: {source.NickName} -> {target.NickName}");
+                }
+                return;
+            }
+
+            processedConnections.Add(connectionId);
+            double length = CalculateWireLength(source, target);
+            _wireCount++;
+
+            GH_ParamWireDisplay targetMode;
+            bool shouldApplyChange = false;
+
+            if (length > _hiddenThreshold)
+            {
+                targetMode = GH_ParamWireDisplay.hidden;
+                shouldApplyChange = (target.WireDisplay != GH_ParamWireDisplay.hidden);
+                if (_debug)
+                {
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
+                }
+            }
+            else if (length > _faintThreshold)
+            {
+                targetMode = GH_ParamWireDisplay.faint;
+                shouldApplyChange = (target.WireDisplay != GH_ParamWireDisplay.faint);
+                if (_debug)
+                {
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
+                }
+            }
+            else
+            {
+                targetMode = (GH_ParamWireDisplay)0;
+                shouldApplyChange = (target.WireDisplay != (GH_ParamWireDisplay)0);
+                if (_debug)
+                {
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px <= {_faintThreshold:F1}px = DEFAULT");
                 }
             }
 
-            return false;
-        }
-
-        private void ProcessParameter(IGH_Param param, Dictionary<Guid, GH_ParamWireDisplay> currentWires, HashSet<string> processedConnections)
-        {
-            if (param == null) return;
-
-            // Process ALL incoming connections (wires coming INTO this parameter)
-            if (param.SourceCount > 0)
+            if (shouldApplyChange)
             {
-                for (int i = 0; i < param.SourceCount; i++)
+                if (!_modifiedWires.ContainsKey(target.InstanceGuid))
                 {
-                    var source = param.Sources[i];
-                    if (source == null) continue;
-
-                    var connectionId = GetConnectionId(source, param);
+                    SetWireDisplay(target, targetMode, target.WireDisplay);
+                    currentWires[target.InstanceGuid] = target.WireDisplay;
+                    _modifiedCount++;
+                }
+                else
+                {
+                    var originalMode = _modifiedWires[target.InstanceGuid];
                     
-                    if (processedConnections.Contains(connectionId))
+                    if (target.WireDisplay != targetMode)
                     {
-                        if (_debug)
-                        {
-                            Log($"  Skipping duplicate wire: {source.NickName} -> {param.NickName}");
-                        }
-                        continue;
-                    }
-
-                    processedConnections.Add(connectionId);
-                    double length = CalculateWireLength(source, param);
-                    _wireCount++;
-
-                    // Determine target display mode based on length
-                    GH_ParamWireDisplay targetMode;
-                    bool shouldApplyChange = false;
-
-                    if (length > _hiddenThreshold)
-                    {
-                        targetMode = GH_ParamWireDisplay.hidden;
-                        shouldApplyChange = (param.WireDisplay != GH_ParamWireDisplay.hidden);
-                        if (_debug)
-                        {
-                            Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
-                        }
-                    }
-                    else if (length > _faintThreshold)
-                    {
-                        targetMode = GH_ParamWireDisplay.faint;
-                        shouldApplyChange = (param.WireDisplay != GH_ParamWireDisplay.faint);
-                        if (_debug)
-                        {
-                            Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
-                        }
-                    }
-                    else
-                    {
-                        // Wire is under faint threshold - should be DEFAULT
-                        targetMode = (GH_ParamWireDisplay)0;
-                        shouldApplyChange = (param.WireDisplay != (GH_ParamWireDisplay)0);
-                        if (_debug)
-                        {
-                            Log($"  Wire {source.NickName} -> {param.NickName}: {length:F1}px <= {_faintThreshold:F1}px = DEFAULT");
-                        }
-                    }
-
-                    // Apply change if needed
-                    if (shouldApplyChange)
-                    {
-                        if (!_modifiedWires.ContainsKey(param.InstanceGuid))
-                        {
-                            // First time modifying this param - save original mode
-                            SetWireDisplay(param, targetMode, param.WireDisplay);
-                            currentWires[param.InstanceGuid] = param.WireDisplay;
-                            _modifiedCount++;
-                        }
-                        else
-                        {
-                            // Param was already modified - restore to its original mode
-                            var originalMode = _modifiedWires[param.InstanceGuid];
-                            
-                            // Only restore if we're changing away from what we set
-                            if (param.WireDisplay != targetMode)
-                            {
-                                RestoreWireDisplay(param, originalMode);
-                            }
-                        }
-                    }
-                    else if (_modifiedWires.ContainsKey(param.InstanceGuid))
-                    {
-                        // Wire already has correct display, remove from tracking
-                        var originalMode = _modifiedWires[param.InstanceGuid];
-                        RestoreWireDisplay(param, originalMode);
+                        RestoreWireDisplay(target, originalMode);
                     }
                 }
+            }
+            else if (_modifiedWires.ContainsKey(target.InstanceGuid))
+            {
+                var originalMode = _modifiedWires[target.InstanceGuid];
+                RestoreWireDisplay(target, originalMode);
             }
         }
 
@@ -322,7 +281,7 @@ namespace VibeTest
 
         private void RestoreAllWires()
         {
-            if (_debug) Log("Restoring all wires");
+            if (_debug) Log("Restoring all connections");
             
             var wiresToRestore = new List<KeyValuePair<Guid, GH_ParamWireDisplay>>(_modifiedWires);
             
