@@ -34,8 +34,8 @@ namespace VibeTest
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            double faintThreshold = 800;
-            double hiddenThreshold = 1500;
+            double faintThreshold = 300;
+            double hiddenThreshold = 900;
             bool refresh = false;
             bool debug = false;
 
@@ -53,8 +53,8 @@ namespace VibeTest
             if (settingsChanged || refreshTriggered)
             {
                 if (OnPingDocument() == null) return;
-
-                _wireMonitor = new WireMonitor(OnPingDocument(), faintThreshold, hiddenThreshold, debug);
+                
+                _wireMonitor = new WireMonitor(OnPingDocument(), faintThreshold, hiddenThreshold, debug, this.InstanceGuid);
                 _wireMonitor.ProcessAllWires();
             }
 

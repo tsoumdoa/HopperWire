@@ -11,6 +11,7 @@ namespace VibeTest
     public class WireMonitor
     {
         private GH_Document _document;
+        private Guid _excludeComponentGuid;
         private double _faintThreshold;
         private double _hiddenThreshold;
         private bool _debug;
@@ -19,9 +20,10 @@ namespace VibeTest
         private int _wireCount;
         private int _modifiedCount;
 
-        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, bool debug)
+        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, bool debug, Guid excludeComponentGuid = default(Guid))
         {
             _document = document;
+            _excludeComponentGuid = excludeComponentGuid;
             _faintThreshold = faintThreshold;
             _hiddenThreshold = hiddenThreshold;
             _debug = debug;
@@ -36,6 +38,10 @@ namespace VibeTest
                 Log($"  Faint Threshold: {_faintThreshold:F1} pixels");
                 Log($"  Hidden Threshold: {_hiddenThreshold:F1} pixels");
                 Log($"  Debug Mode: {_debug}");
+                if (_excludeComponentGuid != Guid.Empty)
+                {
+                    Log($"  Excluding component: {_excludeComponentGuid}");
+                }
             }
         }
 
@@ -48,11 +54,39 @@ namespace VibeTest
             _modifiedCount = 0;
             
             var processedConnections = new HashSet<string>();
+            
+            if (_debug)
+            {
+                int componentCount = 0;
+                int paramCount = 0;
+                
+                foreach (var obj in _document.Objects)
+                {
+                    if (obj is IGH_Component) componentCount++;
+                    if (obj is IGH_Param) paramCount++;
+                }
+                
+                Log($"Document has {_document.ObjectCount} objects");
+                Log($"  Objects by type:");
+                Log($"    Components: {componentCount}");
+                Log($"    Parameters: {paramCount}");
+            }
 
+            // THOROUGH APPROACH: Process ALL parameters and their sources
+            // Each connection is represented once from the target parameter's perspective
             foreach (var obj in _document.Objects)
             {
                 if (obj is IGH_Param param)
                 {
+                    if (ShouldExcludeParameter(param))
+                    {
+                        if (_debug)
+                        {
+                            Log($"  Skipping parameter {param.NickName} (excluded)");
+                        }
+                        continue;
+                    }
+                    
                     ProcessParameter(param, currentWires, processedConnections);
                 }
             }
@@ -122,10 +156,42 @@ namespace VibeTest
             }
         }
 
+        private bool ShouldExcludeParameter(IGH_Param param)
+        {
+            // Check if parameter belongs to the Wire Display Manager component
+            if (_excludeComponentGuid == Guid.Empty)
+                return false;
+
+            // Check if this parameter is part of the excluded component
+            // by searching through all components and checking their parameters
+            foreach (var obj in _document.Objects)
+            {
+                if (obj is IGH_Component comp && comp.InstanceGuid == _excludeComponentGuid)
+                {
+                    // Check if this param is one of the component's input or output params
+                    var componentParams = comp.Params;
+                    foreach (var p in componentParams)
+                    {
+                        if (p.InstanceGuid == param.InstanceGuid)
+                        {
+                            if (_debug)
+                            {
+                                Log($"  Parameter {param.NickName} belongs to excluded component {comp.Name}");
+                            }
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
         private void ProcessParameter(IGH_Param param, Dictionary<Guid, GH_ParamWireDisplay> currentWires, HashSet<string> processedConnections)
         {
             if (param == null) return;
 
+            // Process ALL incoming connections (wires coming INTO this parameter)
             if (param.SourceCount > 0)
             {
                 for (int i = 0; i < param.SourceCount; i++)
@@ -173,7 +239,7 @@ namespace VibeTest
                     else
                     {
                         // Wire is under faint threshold - should be DEFAULT
-                        targetMode = (GH_ParamWireDisplay)0; // Use 0 to avoid 'default' keyword
+                        targetMode = (GH_ParamWireDisplay)0;
                         shouldApplyChange = (param.WireDisplay != (GH_ParamWireDisplay)0);
                         if (_debug)
                         {

@@ -71,27 +71,36 @@ Debug messages are:
 Example debug output:
 ```
 [14:32:15.123] WireMonitor created (manual trigger mode)
-[14:32:15.124]   Faint Threshold: 100.0 pixels
-[14:32:15.125]   Hidden Threshold: 200.0 pixels
+[14:32:15.124]   Faint Threshold: 300.0 pixels
+[14:32:15.125]   Hidden Threshold: 900.0 pixels
 [14:32:15.126]   Debug Mode: True
-[14:32:15.789] Processed 8 wires
-[14:32:15.790]   Modified: 3 wires
-[14:32:15.791]   Wire Number -> Curve: 250.5px > 200.0px = HIDDEN
-[14:32:15.792]   Wire Point -> List: 150.3px > 100.0px = FAINT
-[14:32:15.793]   Wire List -> Panel: 180.7px > 100.0px = FAINT
+[14:32:15.127] Document has 45 objects
+[14:32:15.128]   Objects by type:
+[14:32:15.129]     Components: 12
+[14:32:15.130]     Parameters: 33
+[14:32:15.131]   Skipping parameter Faint (excluded)
+[14:32:15.132]   Skipping parameter Hidden (excluded)
+[14:32:15.133]   Skipping parameter Refresh (excluded)
+[14:32:15.134]   Skipping parameter Debug (excluded)
+[14:32:15.789] Processed 15 unique wires
+[14:32:15.790]   Modified: 5 wires
+[14:32:15.791]   Wire Number -> Curve: 950.5px > 900.0px = HIDDEN
+[14:32:15.792]   Wire Point -> List: 350.3px > 300.0px = FAINT
+[14:32:15.793]   Wire List -> Panel: 180.7px > 300.0px = FAINT
 ```
 
 ## Technical Details
 
-- **Wire Detection**: Scans ALL parameter connections in the document (sources and recipients)
+- **Comprehensive Connection Detection**: Thoroughly scans ALL parameters in document and processes ALL their source connections ✅ IMPROVED
+- **Proper Component Exclusion**: Searches through all components to find and exclude plugin's own parameters accurately ✅ FIXED
 - **Duplicate Prevention**: Uses unique connection IDs to avoid processing same wire twice
-- **Proper Restoration**: Correctly restores wires to default display when below threshold ✅ FIXED
+- **Proper Restoration**: Correctly restores wires to default display when below threshold
 - **Wire Length Calculation**: Straight-line distance between parameter centers (pixels)
 - **Display Modes**: Uses `GH_ParamWireDisplay.faint` and `GH_ParamWireDisplay.hidden` and `GH_ParamWireDisplay.default`
 - **Manual Trigger**: No event listening - just click Refresh to process!
 - **Undo/Redo**: Uses built-in `GH_WireDisplayAction` for proper undo support
 - **Performance**: Process on-demand only - no background monitoring overhead
-- **Debug Mode**: Shows all wire processing including default restoration in log when enabled
+- **Debug Mode**: Shows detailed information about document structure, excluded parameters, and all wire processing when enabled
 
 ## Building
 
@@ -140,12 +149,17 @@ The build will produce `.gha` files for each target framework:
 ## Workflow
 
 1. **Set up your definition** in Grasshopper
-2. **Place the Wire Display Manager** component
-3. **Configure thresholds** (Faint and Hidden)
-4. **Click Refresh** to apply wire display changes
-5. **Move components around** - wires won't update yet
-6. **Click Refresh again** - wires update to new positions!
-7. **Adjust thresholds** if needed → Auto-refreshes
+2. **Place Wire Display Manager** component
+3. **Configure thresholds** (Faint: 300, Hidden: 900)
+4. **Enable Debug mode** (optional) to see what's being processed
+5. **Click Refresh** to apply wire display changes
+6. **Check Debug Log** to see:
+   - Document structure (how many components/parameters)
+   - Which parameters are being excluded
+   - Details of every wire connection
+7. **Move components around** - wires won't update until you click Refresh
+8. **Click Refresh again** - all wire displays update!
+9. **Adjust thresholds** if needed → Auto-refreshes
 8. **Toggle Debug** on to see what's happening
 
 ## Advantages of Manual Trigger
@@ -179,6 +193,7 @@ Recommended threshold values (pixels):
 
 - Wire length is calculated as straight-line distance between component centers
 - Only affects wire display, does not affect component functionality
+- **Plugin's own input wires are excluded from processing** to avoid interference
 - Hidden wires are completely invisible (not shown even when selected)
 - All display changes are recorded for undo/redo
 - Debug logging writes to both output parameter and Rhino command history
