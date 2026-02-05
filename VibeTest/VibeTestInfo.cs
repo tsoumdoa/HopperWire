@@ -25,12 +25,5 @@ namespace VibeTest
 
         //Return a string representing the version.  This returns the same version as the assembly.
         public override string AssemblyVersion => GetType().Assembly.GetName().Version.ToString();
-
-        public override void Load(GH_LibraryVersion version)
-        {
-            base.Load(version);
-            
-            Instances.ComponentServer.AddComponent(typeof(WireDisplayManager), this);
-        }
     }
 }
