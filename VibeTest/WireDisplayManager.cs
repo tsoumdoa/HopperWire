@@ -6,94 +6,79 @@ namespace VibeTest
     public class WireDisplayManager : GH_Component
     {
         private WireMonitor _wireMonitor;
-        private double _lastThreshold = 100.0;
-        private bool _isActive = false;
+        private double _lastFaintThreshold = 100.0;
+        private double _lastHiddenThreshold = 200.0;
+        private bool _lastDebug = false;
+        private bool _lastRefresh = false;
 
         public WireDisplayManager()
           : base("Wire Display Manager", "WireDisplay",
-            "Automatically sets wires longer than the threshold to Faint display",
+            "Manually trigger wire display updates based on length thresholds",
             "VibeTest", "Display")
         {
         }
 
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddNumberParameter("Length Threshold", "Threshold", "Wire length threshold (pixels)", GH_ParamAccess.item, 100.0);
-            pManager.AddNumberParameter("Active", "Active", "Enable or disable the wire monitor", GH_ParamAccess.item, 1.0);
+            pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, 100.0);
+            pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, 200.0);
+            pManager.AddBooleanParameter("Refresh", "Refresh", "Click to refresh wire displays (toggle to refresh)", GH_ParamAccess.item, false);
+            pManager.AddBooleanParameter("Debug", "Debug", "Enable debug logging", GH_ParamAccess.item, false);
         }
 
         protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
         {
             pManager.AddTextParameter("Status", "Status", "Current status of the wire monitor", GH_ParamAccess.item);
+            pManager.AddTextParameter("Log", "Log", "Debug log messages", GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            double threshold = 100.0;
-            double active = 1.0;
+            double faintThreshold = 100.0;
+            double hiddenThreshold = 200.0;
+            bool refresh = false;
+            bool debug = false;
 
-            if (!DA.GetData(0, ref threshold)) return;
-            if (!DA.GetData(1, ref active)) return;
+            DA.GetData(0, ref faintThreshold);
+            DA.GetData(1, ref hiddenThreshold);
+            DA.GetData(2, ref refresh);
+            DA.GetData(3, ref debug);
 
-            var shouldBeActive = active > 0.5;
-            var thresholdChanged = Math.Abs(threshold - _lastThreshold) > 0.001;
-            var activeChanged = (shouldBeActive != _isActive);
+            var settingsChanged = Math.Abs(faintThreshold - _lastFaintThreshold) > 0.001 || 
+                              Math.Abs(hiddenThreshold - _lastHiddenThreshold) > 0.001 ||
+                              debug != _lastDebug;
 
-            if (activeChanged && !shouldBeActive)
+            var refreshTriggered = refresh && !_lastRefresh;
+
+            if (settingsChanged || refreshTriggered)
             {
-                DeactivateMonitor();
-            }
-            else if (activeChanged && shouldBeActive)
-            {
-                ActivateMonitor(threshold);
-            }
-            else if (shouldBeActive && thresholdChanged)
-            {
-                _wireMonitor?.UpdateThreshold(threshold);
+                if (OnPingDocument() == null) return;
+
+                _wireMonitor = new WireMonitor(OnPingDocument(), faintThreshold, hiddenThreshold, debug);
+                _wireMonitor.ProcessAllWires();
             }
 
-            _lastThreshold = threshold;
-            _isActive = shouldBeActive;
+            _lastFaintThreshold = faintThreshold;
+            _lastHiddenThreshold = hiddenThreshold;
+            _lastDebug = debug;
+            _lastRefresh = refresh;
 
-            string status = _isActive 
-                ? $"Active - Monitoring wires > {threshold:F1} pixels" 
-                : "Inactive";
-            
-            DA.SetData(0, status);
-        }
-
-        private void ActivateMonitor(double threshold)
-        {
-            DeactivateMonitor();
-
-            if (OnPingDocument() == null) return;
-
-            _wireMonitor = new WireMonitor(OnPingDocument(), threshold);
-            _wireMonitor.InitializeEvents();
-        }
-
-        private void DeactivateMonitor()
-        {
+            string status = "Ready - Click Refresh to update wire displays";
             if (_wireMonitor != null)
             {
-                _wireMonitor.DisposeEvents();
-                _wireMonitor = null;
+                var wireCount = _wireMonitor.GetWireCount();
+                var modifiedCount = _wireMonitor.GetModifiedCount();
+                status = $"Processed {wireCount} wires, {modifiedCount} modified (Faint > {faintThreshold:F1}px, Hidden > {hiddenThreshold:F1}px)";
             }
-        }
-
-        public override void AddedToDocument(GH_Document document)
-        {
-            base.AddedToDocument(document);
             
-            if (_isActive && document != null)
-            {
-                ActivateMonitor(_lastThreshold);
-            }
+            DA.SetData(0, status);
+            DA.SetData(1, _wireMonitor?.GetDebugLog() ?? "");
         }
 
         public override void RemovedFromDocument(GH_Document document)
         {
-            DeactivateMonitor();
+            _wireMonitor?.Dispose();
+            _wireMonitor = null;
             base.RemovedFromDocument(document);
         }
 
