@@ -72,19 +72,22 @@ namespace VibeTest
             // THOROUGH APPROACH: Collect ALL unique connections first
             foreach (var obj in _document.Objects)
             {
+                // Process floating parameters directly in the document
                 if (obj is IGH_Param param)
                 {
-                    // Add all incoming connections (wires TO this parameter)
-                    if (param.SourceCount > 0)
+                    AddParamConnections(param, allConnections);
+                }
+                
+                // Process component parameters (nested inputs/outputs)
+                if (obj is IGH_Component component)
+                {
+                    foreach (var input in component.Params.Input)
                     {
-                        for (int i = 0; i < param.SourceCount; i++)
-                        {
-                            var source = param.Sources[i];
-                            if (source != null)
-                            {
-                                allConnections.Add(new KeyValuePair<IGH_Param, IGH_Param>(param, source));
-                            }
-                        }
+                        AddParamConnections(input, allConnections);
+                    }
+                    foreach (var output in component.Params.Output)
+                    {
+                        AddParamConnections(output, allConnections);
                     }
                 }
             }
@@ -183,12 +186,10 @@ namespace VibeTest
             _wireCount++;
 
             GH_ParamWireDisplay targetMode;
-            bool shouldApplyChange = false;
 
             if (length > _hiddenThreshold)
             {
                 targetMode = GH_ParamWireDisplay.hidden;
-                shouldApplyChange = (target.WireDisplay != GH_ParamWireDisplay.hidden);
                 if (_debug)
                 {
                     Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
@@ -197,7 +198,6 @@ namespace VibeTest
             else if (length > _faintThreshold)
             {
                 targetMode = GH_ParamWireDisplay.faint;
-                shouldApplyChange = (target.WireDisplay != GH_ParamWireDisplay.faint);
                 if (_debug)
                 {
                     Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
@@ -206,41 +206,53 @@ namespace VibeTest
             else
             {
                 targetMode = (GH_ParamWireDisplay)0;
-                shouldApplyChange = (target.WireDisplay != (GH_ParamWireDisplay)0);
                 if (_debug)
                 {
                     Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px <= {_faintThreshold:F1}px = DEFAULT");
                 }
             }
 
-            if (shouldApplyChange)
+            if (!_modifiedWires.ContainsKey(target.InstanceGuid))
             {
-                if (!_modifiedWires.ContainsKey(target.InstanceGuid))
+                if (target.WireDisplay != targetMode)
                 {
-                    SetWireDisplay(target, targetMode, target.WireDisplay);
                     currentWires[target.InstanceGuid] = target.WireDisplay;
+                    SetWireDisplay(target, targetMode, target.WireDisplay);
                     _modifiedCount++;
                 }
-                else
-                {
-                    var originalMode = _modifiedWires[target.InstanceGuid];
-                    
-                    if (target.WireDisplay != targetMode)
-                    {
-                        RestoreWireDisplay(target, originalMode);
-                    }
-                }
             }
-            else if (_modifiedWires.ContainsKey(target.InstanceGuid))
+            else
             {
                 var originalMode = _modifiedWires[target.InstanceGuid];
-                RestoreWireDisplay(target, originalMode);
+                currentWires[target.InstanceGuid] = originalMode;
+                
+                if (target.WireDisplay != targetMode)
+                {
+                    SetWireDisplay(target, targetMode, target.WireDisplay);
+                }
             }
         }
 
         private string GetConnectionId(IGH_Param source, IGH_Param target)
         {
             return $"{source.InstanceGuid}_{target.InstanceGuid}";
+        }
+
+        private void AddParamConnections(IGH_Param param, List<KeyValuePair<IGH_Param, IGH_Param>> connections)
+        {
+            if (param == null) return;
+            
+            if (param.SourceCount > 0)
+            {
+                for (int i = 0; i < param.SourceCount; i++)
+                {
+                    var source = param.Sources[i];
+                    if (source != null)
+                    {
+                        connections.Add(new KeyValuePair<IGH_Param, IGH_Param>(param, source));
+                    }
+                }
+            }
         }
 
         private double CalculateWireLength(IGH_Param source, IGH_Param target)
