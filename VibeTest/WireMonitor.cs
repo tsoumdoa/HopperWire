@@ -260,13 +260,81 @@ namespace VibeTest
             if (source?.Attributes == null || target?.Attributes == null)
                 return 0;
 
-            PointF sourcePos = source.Attributes.Pivot;
-            PointF targetPos = target.Attributes.Pivot;
+            var sourceGrip = source.Attributes.OutputGrip;
+            var targetGrip = target.Attributes.InputGrip;
 
-            double dx = targetPos.X - sourcePos.X;
-            double dy = targetPos.Y - sourcePos.Y;
+            if (sourceGrip == null || targetGrip == null)
+                return 0;
 
-            return Math.Sqrt(dx * dx + dy * dy);
+            // Approximate wire as a cubic Bezier curve
+            // P0 = source grip (start)
+            // P3 = target grip (end)
+            // P1, P2 = control points that create the curved shape
+
+            PointF p0 = sourceGrip;
+            PointF p3 = targetGrip;
+
+            // Calculate horizontal distance
+            double dx = p3.X - p0.X;
+            double dy = p3.Y - p0.Y;
+
+            // Control points are typically placed at horizontal intervals
+            // For a smooth curve from left to right or right to left
+            double controlOffset = Math.Abs(dx) * 0.3;
+
+            PointF p1, p2;
+
+            if (dx > 0)
+            {
+                // Flowing right
+                p1 = new PointF(p0.X + (float)controlOffset, p0.Y);
+                p2 = new PointF(p3.X - (float)controlOffset, p3.Y);
+            }
+            else
+            {
+                // Flowing left
+                p1 = new PointF(p0.X - (float)controlOffset, p0.Y);
+                p2 = new PointF(p3.X + (float)controlOffset, p3.Y);
+            }
+
+            // Calculate Bezier curve length by sampling points along it
+            return CalculateBezierLength(p0, p1, p2, p3, 20);
+        }
+
+        private double CalculateBezierLength(PointF p0, PointF p1, PointF p2, PointF p3, int segments)
+        {
+            if (segments < 1) segments = 1;
+
+            double totalLength = 0;
+            PointF prevPoint = p0;
+
+            for (int i = 1; i <= segments; i++)
+            {
+                double t = (double)i / segments;
+                PointF currentPoint = EvaluateBezier(p0, p1, p2, p3, t);
+
+                double dx = currentPoint.X - prevPoint.X;
+                double dy = currentPoint.Y - prevPoint.Y;
+                totalLength += Math.Sqrt(dx * dx + dy * dy);
+
+                prevPoint = currentPoint;
+            }
+
+            return totalLength;
+        }
+
+        private PointF EvaluateBezier(PointF p0, PointF p1, PointF p2, PointF p3, double t)
+        {
+            double mt = 1 - t;
+            double mt2 = mt * mt;
+            double mt3 = mt2 * mt;
+            double t2 = t * t;
+            double t3 = t2 * t;
+
+            float x = (float)(mt3 * p0.X + 3 * mt2 * t * p1.X + 3 * mt * t2 * p2.X + t3 * p3.X);
+            float y = (float)(mt3 * p0.Y + 3 * mt2 * t * p1.Y + 3 * mt * t2 * p2.Y + t3 * p3.Y);
+
+            return new PointF(x, y);
         }
 
         private void SetWireDisplay(IGH_Param param, GH_ParamWireDisplay newMode, GH_ParamWireDisplay oldMode)
