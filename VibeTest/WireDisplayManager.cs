@@ -47,8 +47,8 @@ namespace VibeTest
 
         protected override void SolveInstance(IGH_DataAccess DA)
         {
-            double faintThreshold = 300;
-            double hiddenThreshold = 900;
+            double faintThreshold = 900;
+            double hiddenThreshold = 1200;
             bool autoUpdate = false;
             bool refresh = false;
             bool debug = false;
@@ -383,7 +383,7 @@ namespace VibeTest
                     // Get the input grip location (where wires connect to the parameter)
                     var inputGrip = autoParam.Attributes.InputGrip;
                     // Place toggle to the left with 10px spacing
-                    togglePosition = new PointF(inputGrip.X - 100, inputGrip.Y - toggle.Attributes.Bounds.Height / 2);
+                    togglePosition = new PointF(inputGrip.X - toggle.Attributes.Bounds.Width - 20, inputGrip.Y - toggle.Attributes.Bounds.Height / 2);
                 }
                 else if (Attributes?.Pivot != null)
                 {
