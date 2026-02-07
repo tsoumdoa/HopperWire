@@ -183,7 +183,15 @@ namespace VibeTest
 
             processedConnections.Add(connectionId);
             double length = CalculateWireLength(source, target);
+            int sourceWireCount = (source != null && source.Recipients != null) ? source.Recipients.Count : 0;
+            int targetWireCount = target.SourceCount;
+            int connectionCount = Math.Max(sourceWireCount, targetWireCount);
             _wireCount++;
+
+            if (_debug)
+            {
+                Log($"  Checking {source.NickName} -> {target.NickName}: sourceOut={sourceWireCount}, targetIn={targetWireCount}, max={connectionCount}");
+            }
 
             GH_ParamWireDisplay targetMode;
 
@@ -192,7 +200,7 @@ namespace VibeTest
                 targetMode = GH_ParamWireDisplay.hidden;
                 if (_debug)
                 {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_hiddenThreshold:F1}px, {connectionCount} conns = HIDDEN (by length)");
                 }
             }
             else if (length > _faintThreshold)
@@ -200,7 +208,7 @@ namespace VibeTest
                 targetMode = GH_ParamWireDisplay.faint;
                 if (_debug)
                 {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_faintThreshold:F1}px, {connectionCount} conns = FAINT (by length)");
                 }
             }
             else
@@ -208,7 +216,24 @@ namespace VibeTest
                 targetMode = (GH_ParamWireDisplay)0;
                 if (_debug)
                 {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px <= {_faintThreshold:F1}px = DEFAULT");
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px <= {_faintThreshold:F1}px, {connectionCount} conns = DEFAULT");
+                }
+            }
+
+            if (connectionCount > 8)
+            {
+                targetMode = GH_ParamWireDisplay.hidden;
+                if (_debug)
+                {
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {connectionCount} connections > 8 = HIDDEN (overriding length-based)");
+                }
+            }
+            else if (connectionCount > 3)
+            {
+                targetMode = GH_ParamWireDisplay.faint;
+                if (_debug)
+                {
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {connectionCount} connections > 3 = FAINT (overriding length-based)");
                 }
             }
 
