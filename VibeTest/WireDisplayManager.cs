@@ -10,8 +10,8 @@ namespace VibeTest
     public class WireDisplayManager : GH_Component
     {
         private WireMonitor _wireMonitor;
-        private double _lastFaintThreshold = 300.0;
-        private double _lastHiddenThreshold = 900.0;
+        private double _lastFaintThreshold = 800;
+        private double _lastHiddenThreshold = 2300;
         private bool _lastDebug = false;
         private bool _lastRefresh = false;
         private bool _autoUpdate = false;
@@ -32,8 +32,8 @@ namespace VibeTest
 
         protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
         {
-            pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, 300.0);
-            pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, 900.0);
+            pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, _lastFaintThreshold);
+            pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, _lastHiddenThreshold);
             pManager.AddBooleanParameter("Auto Update", "Auto", "Enable automatic updates when canvas changes", GH_ParamAccess.item, false);
             pManager.AddBooleanParameter("Refresh", "Refresh", "Click to manually refresh wire displays", GH_ParamAccess.item, false);
             pManager.AddBooleanParameter("Debug", "Debug", "Enable debug logging", GH_ParamAccess.item, false);
