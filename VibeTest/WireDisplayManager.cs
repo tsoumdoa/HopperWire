@@ -252,6 +252,33 @@ namespace VibeTest
                 SubscribeToObjectEvents(obj);
             }
             
+            try
+            {
+                _isProcessing = true;
+                _wireMonitor?.ProcessRelaysForNewObjects();
+                _lastUpdateTime = DateTime.Now;
+                
+                Rhino.RhinoApp.InvokeOnUiThread((System.Action)delegate
+                {
+                    try
+                    {
+                        ExpireSolution(true);
+                    }
+                    catch { }
+                });
+            }
+            catch (Exception ex)
+            {
+                if (_lastDebug)
+                {
+                    Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Error: {ex.Message}");
+                }
+            }
+            finally
+            {
+                _isProcessing = false;
+            }
+            
             ScheduleWireUpdate();
         }
 
