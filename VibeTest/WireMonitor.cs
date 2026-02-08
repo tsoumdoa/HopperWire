@@ -23,6 +23,7 @@ namespace VibeTest
         private HashSet<Guid> _paramsWithRelays;
         private Dictionary<Guid, Guid> _parameterToIncomingRelayMap;
         private Dictionary<Guid, Guid> _parameterToOutgoingRelayMap;
+        private Dictionary<Guid, Guid> _sourceToOutgoingRelayMap;  // Maps source params to their outgoing relays
 
         public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, bool debug)
         {
@@ -37,6 +38,7 @@ namespace VibeTest
             _paramsWithRelays = new HashSet<Guid>();
             _parameterToIncomingRelayMap = new Dictionary<Guid, Guid>();
             _parameterToOutgoingRelayMap = new Dictionary<Guid, Guid>();
+            _sourceToOutgoingRelayMap = new Dictionary<Guid, Guid>();
 
             if (_debug)
             {
@@ -183,23 +185,68 @@ namespace VibeTest
 
             var paramGuid = param.InstanceGuid;
 
-            IGH_Param relay = null;
-
+            // Check if param has an incoming relay - route all sources through it
             if (_parameterToIncomingRelayMap.ContainsKey(paramGuid))
             {
                 var relayGuid = _parameterToIncomingRelayMap[paramGuid];
-                relay = _document.FindObject(relayGuid, false) as IGH_Param;
+                var relay = _document.FindObject(relayGuid, false) as IGH_Param;
+                if (relay != null)
+                {
+                    RouteThroughRelay(param, relay, routedConnections, "incoming");
+                }
             }
 
-            if (relay == null && _parameterToOutgoingRelayMap.ContainsKey(paramGuid))
+            // Check if any sources have outgoing relays - route connections through them
+            // Iterate backwards since we're modifying the Sources collection
+            for (int i = param.SourceCount - 1; i >= 0; i--)
             {
-                var relayGuid = _parameterToOutgoingRelayMap[paramGuid];
-                relay = _document.FindObject(relayGuid, false) as IGH_Param;
+                var source = param.Sources[i];
+                if (source == null) continue;
+
+                var sourceGuid = source.InstanceGuid;
+
+                // Check if this source has an outgoing relay
+                if (_sourceToOutgoingRelayMap.ContainsKey(sourceGuid))
+                {
+                    var relayGuid = _sourceToOutgoingRelayMap[sourceGuid];
+                    var relay = _document.FindObject(relayGuid, false) as IGH_Param;
+
+                    if (relay != null && source != relay && !IsRelay(source))
+                    {
+                        var connectionId = $"{sourceGuid}_{paramGuid}";
+                        if (routedConnections.Contains(connectionId)) continue;
+
+                        try
+                        {
+                            if (_debug)
+                            {
+                                Log($"  Routing {source.NickName} -> {param.NickName} through outgoing relay {relay.NickName}");
+                            }
+
+                            param.RemoveSource(source);
+                            relay.AddSource(source);
+                            param.AddSource(relay);
+                            _parameterToOutgoingRelayMap[paramGuid] = relayGuid;
+                            routedConnections.Add(connectionId);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (_debug)
+                            {
+                                Log($"  Error routing connection through outgoing relay: {ex.Message}");
+                            }
+                        }
+                    }
+                }
             }
+        }
 
-            if (relay == null) return;
+        private void RouteThroughRelay(IGH_Param param, IGH_Param relay, HashSet<string> routedConnections, string relayType)
+        {
+            var paramGuid = param.InstanceGuid;
 
-            for (int i = 0; i < param.SourceCount; i++)
+            // Iterate backwards since we're modifying the Sources collection
+            for (int i = param.SourceCount - 1; i >= 0; i--)
             {
                 var source = param.Sources[i];
                 if (source == null) continue;
@@ -215,10 +262,11 @@ namespace VibeTest
                     {
                         if (_debug)
                         {
-                            Log($"  Routing {source.NickName} -> {param.NickName} through relay {relay.NickName}");
+                            Log($"  Routing {source.NickName} -> {param.NickName} through {relayType} relay {relay.NickName}");
                         }
 
                         param.RemoveSource(source);
+                        relay.AddSource(source);
                         param.AddSource(relay);
                         routedConnections.Add(connectionId);
                     }
@@ -253,23 +301,37 @@ namespace VibeTest
             _paramsWithRelays.Clear();
             _parameterToIncomingRelayMap.Clear();
             _parameterToOutgoingRelayMap.Clear();
+            _sourceToOutgoingRelayMap.Clear();
             RestoreAllWires();
         }
 
         private void Log(string message)
         {
-            if (!_debug) return;
-            
-            var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
-            _debugLog.AppendLine($"[{timestamp}] {message}");
-            
+            if (_debug)
+            {
+                _debugLog.AppendLine(message);
+            }
+        }
+
+        private void SuppressUndoRecords(int count)
+        {
             try
             {
-                Rhino.RhinoApp.WriteLine($"[WireMonitor] {message}");
+                for (int i = 0; i < count; i++)
+                {
+                    _document.UndoServer.ClearUndo();
+                }
+                if (_debug)
+                {
+                    Log($"  Suppressed {count} undo record(s) from relay operations");
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore errors when Rhino is not available
+                if (_debug)
+                {
+                    Log($"  Warning: Could not suppress undo records: {ex.Message}");
+                }
             }
         }
 
@@ -554,6 +616,9 @@ namespace VibeTest
                 }
             }
 
+            // Suppress undo recording during relay operations
+            var undoCountBefore = _document.UndoServer.UndoCount;
+
             foreach (var param in parametersNeedingRelay)
             {
                 var relayGuid = AddRelayForParameter(param);
@@ -562,6 +627,14 @@ namespace VibeTest
                     currentRunRelays.Add(relayGuid.Value);
                     _paramsWithRelays.Add(param.InstanceGuid);
                 }
+            }
+
+            // Clear undo records created during relay operations
+            var undoCountAfter = _document.UndoServer.UndoCount;
+            var recordsToClear = undoCountAfter - undoCountBefore;
+            if (recordsToClear > 0)
+            {
+                SuppressUndoRecords(recordsToClear);
             }
         }
 
@@ -795,6 +868,9 @@ namespace VibeTest
                     Log($"  Stack trace: {ex.StackTrace}");
                 }
             }
+
+            // Map the source param to its outgoing relay
+            _sourceToOutgoingRelayMap[sourceParam.InstanceGuid] = relayGuid;
 
             return relayGuid;
         }
