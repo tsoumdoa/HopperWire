@@ -11,7 +11,7 @@ namespace VibeTest
     {
         private WireMonitor _wireMonitor;
         private double _lastFaintThreshold = 800;
-        private double _lastHiddenThreshold = 2300;
+        private double _lastHiddenThreshold = 1500;
         private bool _lastDebug = false;
         private bool _lastRefresh = false;
         private bool _autoUpdate = false;
