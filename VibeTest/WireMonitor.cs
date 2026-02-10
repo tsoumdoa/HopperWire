@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Text;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Parameters;
-using Grasshopper.Kernel.Special;
 using Grasshopper.Kernel.Undo;
 using Grasshopper.Kernel.Undo.Actions;
 
@@ -20,10 +18,6 @@ namespace VibeTest
         private StringBuilder _debugLog;
         private int _wireCount;
         private int _modifiedCount;
-        private HashSet<Guid> _paramsWithRelays;
-        private Dictionary<Guid, Guid> _parameterToIncomingRelayMap;
-        private Dictionary<Guid, Guid> _parameterToOutgoingRelayMap;
-        private Dictionary<Guid, Guid> _sourceToOutgoingRelayMap;  // Maps source params to their outgoing relays
 
         public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, bool debug)
         {
@@ -35,10 +29,6 @@ namespace VibeTest
             _debugLog = new StringBuilder();
             _wireCount = 0;
             _modifiedCount = 0;
-            _paramsWithRelays = new HashSet<Guid>();
-            _parameterToIncomingRelayMap = new Dictionary<Guid, Guid>();
-            _parameterToOutgoingRelayMap = new Dictionary<Guid, Guid>();
-            _sourceToOutgoingRelayMap = new Dictionary<Guid, Guid>();
 
             if (_debug)
             {
@@ -141,146 +131,6 @@ namespace VibeTest
             }
         }
 
-        public void ProcessRelaysForNewObjects()
-        {
-            ProcessRelays();
-            RouteNewConnectionsThroughRelays();
-        }
-
-        private void RouteNewConnectionsThroughRelays()
-        {
-            if (_debug)
-            {
-                Log("Routing new connections through existing relays");
-            }
-
-            var routedConnections = new HashSet<string>();
-
-            foreach (var obj in _document.Objects)
-            {
-                IGH_Param param = null;
-
-                if (obj is IGH_Param p)
-                {
-                    param = p;
-                    CheckAndRouteConnections(param, routedConnections);
-                }
-                else if (obj is IGH_Component component)
-                {
-                    foreach (var input in component.Params.Input)
-                    {
-                        CheckAndRouteConnections(input, routedConnections);
-                    }
-                    foreach (var output in component.Params.Output)
-                    {
-                        CheckAndRouteConnections(output, routedConnections);
-                    }
-                }
-            }
-        }
-
-        private void CheckAndRouteConnections(IGH_Param param, HashSet<string> routedConnections)
-        {
-            if (param == null) return;
-
-            var paramGuid = param.InstanceGuid;
-
-            // Check if param has an incoming relay - route all sources through it
-            if (_parameterToIncomingRelayMap.ContainsKey(paramGuid))
-            {
-                var relayGuid = _parameterToIncomingRelayMap[paramGuid];
-                var relay = _document.FindObject(relayGuid, false) as IGH_Param;
-                if (relay != null)
-                {
-                    RouteThroughRelay(param, relay, routedConnections, "incoming");
-                }
-            }
-
-            // Check if any sources have outgoing relays - route connections through them
-            // Iterate backwards since we're modifying the Sources collection
-            for (int i = param.SourceCount - 1; i >= 0; i--)
-            {
-                var source = param.Sources[i];
-                if (source == null) continue;
-
-                var sourceGuid = source.InstanceGuid;
-
-                // Check if this source has an outgoing relay
-                if (_sourceToOutgoingRelayMap.ContainsKey(sourceGuid))
-                {
-                    var relayGuid = _sourceToOutgoingRelayMap[sourceGuid];
-                    var relay = _document.FindObject(relayGuid, false) as IGH_Param;
-
-                    if (relay != null && source != relay && !IsRelay(source))
-                    {
-                        var connectionId = $"{sourceGuid}_{paramGuid}";
-                        if (routedConnections.Contains(connectionId)) continue;
-
-                        try
-                        {
-                            if (_debug)
-                            {
-                                Log($"  Routing {source.NickName} -> {param.NickName} through outgoing relay {relay.NickName}");
-                            }
-
-                            param.RemoveSource(source);
-                            relay.AddSource(source);
-                            param.AddSource(relay);
-                            _parameterToOutgoingRelayMap[paramGuid] = relayGuid;
-                            routedConnections.Add(connectionId);
-                        }
-                        catch (Exception ex)
-                        {
-                            if (_debug)
-                            {
-                                Log($"  Error routing connection through outgoing relay: {ex.Message}");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        private void RouteThroughRelay(IGH_Param param, IGH_Param relay, HashSet<string> routedConnections, string relayType)
-        {
-            var paramGuid = param.InstanceGuid;
-
-            // Iterate backwards since we're modifying the Sources collection
-            for (int i = param.SourceCount - 1; i >= 0; i--)
-            {
-                var source = param.Sources[i];
-                if (source == null) continue;
-
-                var sourceGuid = source.InstanceGuid;
-                var connectionId = $"{sourceGuid}_{paramGuid}";
-
-                if (routedConnections.Contains(connectionId)) continue;
-
-                if (source != relay && !IsRelay(source))
-                {
-                    try
-                    {
-                        if (_debug)
-                        {
-                            Log($"  Routing {source.NickName} -> {param.NickName} through {relayType} relay {relay.NickName}");
-                        }
-
-                        param.RemoveSource(source);
-                        relay.AddSource(source);
-                        param.AddSource(relay);
-                        routedConnections.Add(connectionId);
-                    }
-                    catch (Exception ex)
-                    {
-                        if (_debug)
-                        {
-                            Log($"  Error routing connection: {ex.Message}");
-                        }
-                    }
-                }
-            }
-        }
-
         public string GetDebugLog()
         {
             return _debugLog.ToString();
@@ -298,10 +148,6 @@ namespace VibeTest
 
         public void Dispose()
         {
-            _paramsWithRelays.Clear();
-            _parameterToIncomingRelayMap.Clear();
-            _parameterToOutgoingRelayMap.Clear();
-            _sourceToOutgoingRelayMap.Clear();
             RestoreAllWires();
         }
 
@@ -310,28 +156,6 @@ namespace VibeTest
             if (_debug)
             {
                 _debugLog.AppendLine(message);
-            }
-        }
-
-        private void SuppressUndoRecords(int count)
-        {
-            try
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    _document.UndoServer.ClearUndo();
-                }
-                if (_debug)
-                {
-                    Log($"  Suppressed {count} undo record(s) from relay operations");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (_debug)
-                {
-                    Log($"  Warning: Could not suppress undo records: {ex.Message}");
-                }
             }
         }
 
@@ -350,15 +174,7 @@ namespace VibeTest
 
             processedConnections.Add(connectionId);
             double length = CalculateWireLength(source, target);
-            int sourceWireCount = (source != null && source.Recipients != null) ? source.Recipients.Count : 0;
-            int targetWireCount = target.SourceCount;
-            int connectionCount = Math.Max(sourceWireCount, targetWireCount);
             _wireCount++;
-
-            if (_debug)
-            {
-                Log($"  Checking {source.NickName} -> {target.NickName}: sourceOut={sourceWireCount}, targetIn={targetWireCount}, max={connectionCount}");
-            }
 
             GH_ParamWireDisplay targetMode;
 
@@ -367,7 +183,7 @@ namespace VibeTest
                 targetMode = GH_ParamWireDisplay.hidden;
                 if (_debug)
                 {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_hiddenThreshold:F1}px, {connectionCount} conns = HIDDEN (by length)");
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_hiddenThreshold:F1}px = HIDDEN");
                 }
             }
             else if (length > _faintThreshold)
@@ -375,7 +191,7 @@ namespace VibeTest
                 targetMode = GH_ParamWireDisplay.faint;
                 if (_debug)
                 {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_faintThreshold:F1}px, {connectionCount} conns = FAINT (by length)");
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px > {_faintThreshold:F1}px = FAINT");
                 }
             }
             else
@@ -383,24 +199,7 @@ namespace VibeTest
                 targetMode = (GH_ParamWireDisplay)0;
                 if (_debug)
                 {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px <= {_faintThreshold:F1}px, {connectionCount} conns = DEFAULT");
-                }
-            }
-
-            if (connectionCount > 8)
-            {
-                targetMode = GH_ParamWireDisplay.hidden;
-                if (_debug)
-                {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {connectionCount} connections > 8 = HIDDEN (overriding length-based)");
-                }
-            }
-            else if (connectionCount > 3)
-            {
-                targetMode = GH_ParamWireDisplay.faint;
-                if (_debug)
-                {
-                    Log($"  Wire {source.NickName} -> {target.NickName}: {connectionCount} connections > 3 = FAINT (overriding length-based)");
+                    Log($"  Wire {source.NickName} -> {target.NickName}: {length:F1}px = DEFAULT");
                 }
             }
 
@@ -564,315 +363,6 @@ namespace VibeTest
             }
             
             _modifiedWires.Clear();
-        }
-
-        private IGH_Param CreateRelay(IGH_Param referenceParam, string nameSuffix)
-        {
-            if (referenceParam == null) return null;
-
-            IGH_Param relay = new Param_GenericObject();
-            
-            relay.NickName = $"{referenceParam.NickName}{nameSuffix}";
-            relay.MutableNickName = true;
-            relay.CreateAttributes();
-
-            return relay;
-        }
-
-        private void ProcessRelays()
-        {
-            var parametersNeedingRelay = new List<IGH_Param>();
-            var currentRunRelays = new HashSet<Guid>();
-
-            foreach (var obj in _document.Objects)
-            {
-                IGH_Param param = null;
-
-                if (obj is IGH_Param p)
-                {
-                    param = p;
-                }
-                else if (obj is IGH_Component component)
-                {
-                    foreach (var input in component.Params.Input)
-                    {
-                        if (NeedsRelay(input) && !_paramsWithRelays.Contains(input.InstanceGuid) && !IsRelay(input) && !currentRunRelays.Contains(input.InstanceGuid))
-                        {
-                            parametersNeedingRelay.Add(input);
-                        }
-                    }
-                    foreach (var output in component.Params.Output)
-                    {
-                        if (NeedsRelay(output) && !_paramsWithRelays.Contains(output.InstanceGuid) && !IsRelay(output) && !currentRunRelays.Contains(output.InstanceGuid))
-                        {
-                            parametersNeedingRelay.Add(output);
-                        }
-                    }
-                }
-
-                if (param != null && NeedsRelay(param) && !_paramsWithRelays.Contains(param.InstanceGuid) && !IsRelay(param) && !currentRunRelays.Contains(param.InstanceGuid))
-                {
-                    parametersNeedingRelay.Add(param);
-                }
-            }
-
-            // Suppress undo recording during relay operations
-            var undoCountBefore = _document.UndoServer.UndoCount;
-
-            foreach (var param in parametersNeedingRelay)
-            {
-                var relayGuid = AddRelayForParameter(param);
-                if (relayGuid.HasValue)
-                {
-                    currentRunRelays.Add(relayGuid.Value);
-                    _paramsWithRelays.Add(param.InstanceGuid);
-                }
-            }
-
-            // Clear undo records created during relay operations
-            var undoCountAfter = _document.UndoServer.UndoCount;
-            var recordsToClear = undoCountAfter - undoCountBefore;
-            if (recordsToClear > 0)
-            {
-                SuppressUndoRecords(recordsToClear);
-            }
-        }
-
-        private bool IsRelay(IGH_Param param)
-        {
-            if (param == null) return false;
-            return param.NickName != null && param.NickName.EndsWith("_Relay");
-        }
-
-        private bool NeedsRelay(IGH_Param param)
-        {
-            if (param == null) return false;
-
-            int incomingCount = param.SourceCount;
-            int outgoingCount = (param.Recipients != null) ? param.Recipients.Count : 0;
-
-            return incomingCount > 3 || outgoingCount > 3;
-        }
-
-        private Guid? AddRelayForParameter(IGH_Param param)
-        {
-            if (param == null || param.Attributes == null) return null;
-
-            var incomingCount = param.SourceCount;
-            var outgoingCount = (param.Recipients != null) ? param.Recipients.Count : 0;
-
-            var relayForIncoming = incomingCount > 3;
-            var relayForOutgoing = outgoingCount > 3;
-
-            Guid? relayGuid = null;
-
-            if (relayForIncoming)
-            {
-                relayGuid = AddIncomingRelay(param);
-                if (relayGuid.HasValue)
-                {
-                    _parameterToIncomingRelayMap[param.InstanceGuid] = relayGuid.Value;
-                }
-            }
-
-            if (relayForOutgoing)
-            {
-                relayGuid = AddOutgoingRelay(param);
-                if (relayGuid.HasValue)
-                {
-                    _parameterToOutgoingRelayMap[param.InstanceGuid] = relayGuid.Value;
-                }
-            }
-
-            return relayGuid;
-        }
-
-        private Guid? AddIncomingRelay(IGH_Param targetParam)
-        {
-            if (targetParam == null || targetParam.Attributes == null) return null;
-
-            var sources = new List<IGH_Param>();
-            for (int i = 0; i < targetParam.SourceCount; i++)
-            {
-                var source = targetParam.Sources[i];
-                if (source != null)
-                {
-                    sources.Add(source);
-                }
-            }
-
-            if (sources.Count == 0) return null;
-
-            var relay = CreateRelay(targetParam, "_Relay");
-            if (relay == null) return null;
-
-            var targetGrip = targetParam.Attributes.InputGrip;
-            float totalX = 0;
-            float totalY = 0;
-
-            foreach (var source in sources)
-            {
-                if (source?.Attributes != null)
-                {
-                    totalX += source.Attributes.OutputGrip.X;
-                    totalY += source.Attributes.OutputGrip.Y;
-                }
-            }
-
-            float avgX = totalX / sources.Count;
-            float avgY = totalY / sources.Count;
-
-            var relayX = (avgX + targetGrip.X) / 2f;
-            var relayY = (avgY + targetGrip.Y) / 2f;
-
-            if (relay.Attributes != null)
-            {
-                relay.Attributes.Pivot = new PointF(relayX, relayY);
-            }
-
-            _document.AddObject(relay, true);
-
-            if (_debug)
-            {
-                Log($"  Added incoming relay {relay.NickName} for {targetParam.NickName} ({sources.Count} sources)");
-                Log($"  Relay position: ({relayX:F1}, {relayY:F1})");
-            }
-
-            foreach (var source in sources)
-            {
-                try
-                {
-                    targetParam.RemoveSource(source);
-                    relay.AddSource(source);
-                }
-                catch (Exception ex)
-                {
-                    if (_debug)
-                    {
-                        Log($"  Error rewiring {source?.NickName} -> {targetParam.NickName}: {ex.Message}");
-                    }
-                }
-            }
-
-            try
-            {
-                targetParam.AddSource(relay);
-            }
-            catch (Exception ex)
-            {
-                if (_debug)
-                {
-                    Log($"  Error connecting relay -> targetParam: {ex.Message}");
-                }
-            }
-
-            return relay.InstanceGuid;
-        }
-
-        private Guid? AddOutgoingRelay(IGH_Param sourceParam)
-        {
-            if (sourceParam == null || sourceParam.Attributes == null || sourceParam.Recipients == null) return null;
-
-            var targets = new List<IGH_Param>(sourceParam.Recipients);
-
-            if (targets.Count == 0) return null;
-
-            var relay = CreateRelay(sourceParam, "_Relay");
-            if (relay == null) return null;
-
-            var sourceGrip = sourceParam.Attributes.OutputGrip;
-            float totalX = 0;
-            float totalY = 0;
-
-            foreach (var target in targets)
-            {
-                if (target?.Attributes != null)
-                {
-                    totalX += target.Attributes.InputGrip.X;
-                    totalY += target.Attributes.InputGrip.Y;
-                }
-            }
-
-            float avgX = totalX / targets.Count;
-            float avgY = totalY / targets.Count;
-
-            var relayX = (avgX + sourceGrip.X) / 2f;
-            var relayY = (avgY + sourceGrip.Y) / 2f;
-
-            if (relay.Attributes != null)
-            {
-                relay.Attributes.Pivot = new PointF(relayX, relayY);
-            }
-
-            _document.AddObject(relay, true);
-
-            var relayGuid = relay.InstanceGuid;
-
-            if (_debug)
-            {
-                Log($"  Added outgoing relay {relay.NickName} for {sourceParam.NickName} ({targets.Count} targets)");
-                Log($"  Relay position: ({relayX:F1}, {relayY:F1})");
-            }
-
-            if (_debug)
-            {
-                Log($"  About to rewire {targets.Count} targets from {sourceParam.NickName}");
-                Log($"  Relay instance GUID: {relayGuid}");
-            }
-
-            foreach (var target in targets)
-            {
-                try
-                {
-                    target.RemoveSource(sourceParam);
-                    target.AddSource(relay);
-                    _parameterToOutgoingRelayMap[target.InstanceGuid] = relayGuid;
-                    if (_debug)
-                    {
-                        Log($"  Rewired {sourceParam.NickName} -> {relay.NickName} -> {target.NickName}");
-                        Log($"  Mapped target {target.NickName} to relay {relay.NickName}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    if (_debug)
-                    {
-                        Log($"  Error rewiring {sourceParam.NickName} -> {target?.NickName}: {ex.Message}");
-                    }
-                }
-            }
-
-            if (_debug)
-            {
-                Log($"  About to connect {sourceParam.NickName} -> {relay.NickName}");
-                Log($"  Relay current source count: {relay.SourceCount}");
-                Log($"  Source param recipients: {sourceParam.Recipients?.Count ?? 0}");
-            }
-
-            try
-            {
-                relay.AddSource(sourceParam);
-                if (_debug)
-                {
-                    Log($"  Successfully connected {sourceParam.NickName} -> {relay.NickName}");
-                    Log($"  Relay now has {relay.SourceCount} sources");
-                    Log($"  Source param now has {sourceParam.Recipients?.Count ?? 0} recipients");
-                    Log($"  Relay now has {relay.Recipients?.Count ?? 0} recipients");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (_debug)
-                {
-                    Log($"  ERROR connecting sourceParam -> relay: {ex.GetType().Name}: {ex.Message}");
-                    Log($"  Stack trace: {ex.StackTrace}");
-                }
-            }
-
-            // Map the source param to its outgoing relay
-            _sourceToOutgoingRelayMap[sourceParam.InstanceGuid] = relayGuid;
-
-            return relayGuid;
         }
     }
 }
