@@ -16,6 +16,7 @@ namespace VibeTest
         private bool _autoUpdate = false;
         private GH_Document _subscribedDocument;
         private bool _isProcessing = false;
+        private bool _isSaving = false;
 
 
         public WireDisplayManager()
@@ -157,7 +158,7 @@ namespace VibeTest
 
         private void OnDocumentModifiedChanged(object sender, GH_DocModifiedEventArgs e)
         {
-            if (!_autoUpdate || _isProcessing || this.Locked ) return;
+            if (!_autoUpdate || _isProcessing || _isSaving || this.Locked ) return;
             
             // Only trigger when document is saved (Modified changes from true to false)
             if (!e.Modified)
@@ -166,7 +167,43 @@ namespace VibeTest
                 {
                     Rhino.RhinoApp.WriteLine("[WireDisplayManager] Document saved - updating wire displays");
                 }
+                
                 ProcessWiresSafe();
+                
+                // Check if wire processing made any changes
+                bool madeChanges = _wireMonitor != null && _wireMonitor.GetModifiedCount() > 0;
+                
+                if (madeChanges)
+                {
+                    // Save the document after wire changes to persist them
+                    Rhino.RhinoApp.InvokeOnUiThread((System.Action)delegate
+                    {
+                        try
+                        {
+                            var doc = OnPingDocument();
+                            bool isModified = (doc != null) && doc.IsModified;
+                            if (isModified)
+                            {
+                                if (_lastDebug)
+                                {
+                                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Saving document to persist wire changes");
+                                }
+                                // Use Rhino command to save the current Grasshopper document
+                                _isSaving = true;
+                                Rhino.RhinoApp.RunScript("_GrasshopperSave", true);
+                                _isSaving = false;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _isSaving = false;
+                            if (_lastDebug)
+                            {
+                                Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Error saving document: {ex.Message}");
+                            }
+                        }
+                    });
+                }
             }
         }
 
