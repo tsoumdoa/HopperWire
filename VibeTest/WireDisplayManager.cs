@@ -157,7 +157,7 @@ namespace VibeTest
 
         private void OnDocumentModifiedChanged(object sender, GH_DocModifiedEventArgs e)
         {
-            if (!_autoUpdate || _isProcessing) return;
+            if (!_autoUpdate || _isProcessing || this.Locked ) return;
             
             // Only trigger when document is saved (Modified changes from true to false)
             if (!e.Modified)
