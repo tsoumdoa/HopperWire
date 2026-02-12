@@ -10,6 +10,7 @@ namespace VibeTest
         private WireMonitor _wireMonitor;
         private double _lastFaintThreshold = 800;
         private double _lastHiddenThreshold = 1500;
+        private float _lastSpatialGridSize = 200;
         private bool _lastDebug = false;
         private bool _lastRefresh = false;
         private bool _autoUpdate = false;
@@ -28,6 +29,7 @@ namespace VibeTest
         {
             pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, _lastFaintThreshold);
             pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, _lastHiddenThreshold);
+            pManager.AddNumberParameter("Spatial Grid Size", "Grid", "Cell size for spatial grid optimization (pixels)", GH_ParamAccess.item, _lastSpatialGridSize);
             pManager.AddBooleanParameter("Auto Update", "Auto", "Enable automatic updates when canvas changes", GH_ParamAccess.item, true);
             pManager.AddBooleanParameter("Refresh", "Refresh", "Click to manually refresh wire displays", GH_ParamAccess.item, false);
             pManager.AddBooleanParameter("Debug", "Debug", "Enable debug logging", GH_ParamAccess.item, false);
@@ -43,15 +45,17 @@ namespace VibeTest
         {
             double faintThreshold = 900;
             double hiddenThreshold = 1200;
+            double spatialGridSize = 200;
             bool autoUpdate = false;
             bool refresh = false;
             bool debug = false;
 
             DA.GetData(0, ref faintThreshold);
             DA.GetData(1, ref hiddenThreshold);
-            DA.GetData(2, ref autoUpdate);
-            DA.GetData(3, ref refresh);
-            DA.GetData(4, ref debug);
+            DA.GetData(2, ref spatialGridSize);
+            DA.GetData(3, ref autoUpdate);
+            DA.GetData(4, ref refresh);
+            DA.GetData(5, ref debug);
 
             var doc = OnPingDocument();
             if (doc == null)
@@ -63,6 +67,7 @@ namespace VibeTest
 
             var settingsChanged = Math.Abs(faintThreshold - _lastFaintThreshold) > 0.001 || 
                               Math.Abs(hiddenThreshold - _lastHiddenThreshold) > 0.001 ||
+                              Math.Abs(spatialGridSize - _lastSpatialGridSize) > 0.001 ||
                               debug != _lastDebug;
 
             var refreshTriggered = refresh && !_lastRefresh;
@@ -89,12 +94,13 @@ namespace VibeTest
             if (settingsChanged || refreshTriggered || (_autoUpdate && _wireMonitor == null))
             {
                 _wireMonitor?.Dispose();
-                _wireMonitor = new WireMonitor(doc, faintThreshold, hiddenThreshold, debug);
+                _wireMonitor = new WireMonitor(doc, faintThreshold, hiddenThreshold, (float)spatialGridSize, debug);
                 ProcessWiresSafe();
             }
 
             _lastFaintThreshold = faintThreshold;
             _lastHiddenThreshold = hiddenThreshold;
+            _lastSpatialGridSize = (float)spatialGridSize;
             _lastDebug = debug;
             _lastRefresh = refresh;
 
