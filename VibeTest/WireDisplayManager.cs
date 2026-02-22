@@ -19,10 +19,12 @@ namespace VibeTest
         private bool _isSaving = false;
 
 
+
+
         public WireDisplayManager()
           : base("Wire Display Manager", "WireDisplay",
             "Automatically manages wire display based on length thresholds",
-            "VibeTest", "Display")
+            "Params", "Util")
         {
         }
 

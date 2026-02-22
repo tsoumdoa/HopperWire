@@ -15,8 +15,6 @@ namespace VibeTest
         //Return a short string describing the purpose of this GHA library.
         public override string Description => "Wire display management plugin for Grasshopper";
 
-        public override Guid Id => new Guid("ad130c1c-030b-441d-b903-e0eed8e4f849");
-
         //Return a string identifying you or your company.
         public override string AuthorName => "VibeTest";
 
