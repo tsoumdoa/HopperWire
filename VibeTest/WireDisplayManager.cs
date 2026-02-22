@@ -285,6 +285,6 @@ namespace VibeTest
             }
         }
 
-        public override Guid ComponentGuid => new Guid("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+        public override Guid ComponentGuid => new Guid("A100BFA4-603D-4609-8657-184298E7194C");
     }
 }
