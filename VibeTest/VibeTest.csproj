@@ -20,10 +20,12 @@
     <Title>VibeTest</Title>
     <Company>VibeTest Authors</Company>
     <Description>Description of VibeTest</Description>
+    <AssemblyIcon>icon.png</AssemblyIcon>
   </PropertyGroup>
   
   <ItemGroup>
     <PackageReference Include="Grasshopper" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+    <EmbeddedResource Include="icon.png" />
   </ItemGroup>
 
   <!-- For Windows only builds -->

@@ -260,7 +260,30 @@ namespace VibeTest
             base.RemovedFromDocument(document);
         }
 
-        protected override System.Drawing.Bitmap Icon => null;
+        protected override System.Drawing.Bitmap Icon
+        {
+            get
+            {
+                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                var resourceNames = assembly.GetManifestResourceNames();
+                
+                foreach (var resourceName in resourceNames)
+                {
+                    if (resourceName.EndsWith("icon.png"))
+                    {
+                        using (var stream = assembly.GetManifestResourceStream(resourceName))
+                        {
+                            if (stream != null)
+                            {
+                                return new System.Drawing.Bitmap(stream);
+                            }
+                        }
+                    }
+                }
+                
+                return null;
+            }
+        }
 
         public override Guid ComponentGuid => new Guid("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
     }
