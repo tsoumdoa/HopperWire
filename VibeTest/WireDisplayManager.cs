@@ -158,41 +158,150 @@ namespace VibeTest
             _subscribedDocument = null;
         }
 
+        private int _lastObjectCount = 0;
+        private HashSet<Guid> _lastObjectIds = new HashSet<Guid>();
+        private Dictionary<Guid, RectangleF> _lastObjectBounds = new Dictionary<Guid, RectangleF>();
+        private int _lastConnectionCount = 0;
+
+        private bool HasCanvasChanged(GH_Document doc)
+        {
+            if (doc == null) return false;
+
+            int currentObjectCount = doc.ObjectCount;
+            
+            var currentObjectIds = new HashSet<Guid>();
+            int currentConnectionCount = 0;
+            var currentBounds = new Dictionary<Guid, RectangleF>();
+            
+            foreach (var obj in doc.Objects)
+            {
+                if (obj == null) continue;
+                
+                currentObjectIds.Add(obj.InstanceGuid);
+                
+                if (obj is IGH_Component comp)
+                {
+                    if (comp.Attributes != null)
+                    {
+                        currentBounds[obj.InstanceGuid] = comp.Attributes.Bounds;
+                    }
+                }
+                else if (obj is IGH_Param param)
+                {
+                    if (param.Attributes != null)
+                    {
+                        currentBounds[obj.InstanceGuid] = param.Attributes.Bounds;
+                    }
+                    
+                    currentConnectionCount += param.SourceCount;
+                }
+            }
+            
+            bool objectCountChanged = currentObjectCount != _lastObjectCount;
+            bool objectIdsChanged = !currentObjectIds.SetEquals(_lastObjectIds);
+            
+            bool boundsChanged = false;
+            foreach (var kvp in currentBounds)
+            {
+                if (_lastObjectBounds.TryGetValue(kvp.Key, out var lastBounds))
+                {
+                    if (!lastBounds.Equals(kvp.Value))
+                    {
+                        boundsChanged = true;
+                        break;
+                    }
+                }
+                else
+                {
+                    boundsChanged = true;
+                    break;
+                }
+            }
+            
+            bool connectionsChanged = currentConnectionCount != _lastConnectionCount;
+            
+            _lastObjectCount = currentObjectCount;
+            _lastObjectIds = currentObjectIds;
+            _lastObjectBounds = currentBounds;
+            _lastConnectionCount = currentConnectionCount;
+            
+            return objectCountChanged || objectIdsChanged || boundsChanged || connectionsChanged;
+        }
+
         private void OnDocumentModifiedChanged(object sender, GH_DocModifiedEventArgs e)
         {
-            if (!_autoUpdate || _isProcessing || _isSaving || this.Locked ) return;
+            if (!_autoUpdate || _isProcessing || _isSaving || this.Locked) return;
             
-            // Only trigger when document is saved (Modified changes from true to false)
             if (!e.Modified)
             {
+                var doc = OnPingDocument();
+                if (doc == null) return;
+                
+                if (!HasCanvasChanged(doc))
+                {
+                    if (_lastDebug)
+                    {
+                        Rhino.RhinoApp.WriteLine("[WireDisplayManager] Document saved but no canvas changes - skipping wire processing");
+                    }
+                    return;
+                }
+                
                 if (_lastDebug)
                 {
-                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Document saved - updating wire displays");
+                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Document saved with canvas changes - processing wires");
                 }
                 
                 ProcessWiresSafe();
                 
-                // Check if wire processing made any changes
                 bool madeChanges = _wireMonitor != null && _wireMonitor.GetModifiedCount() > 0;
                 
                 if (madeChanges)
                 {
-                    // Save the document after wire changes to persist them
                     Rhino.RhinoApp.InvokeOnUiThread((System.Action)delegate
                     {
                         try
                         {
-                            var doc = OnPingDocument();
-                            bool isModified = (doc != null) && doc.IsModified;
+                            var saveDoc = OnPingDocument();
+                            bool isModified = (saveDoc != null) && saveDoc.IsModified;
                             if (isModified)
                             {
                                 if (_lastDebug)
                                 {
                                     Rhino.RhinoApp.WriteLine("[WireDisplayManager] Saving document to persist wire changes");
                                 }
-                                // Use Rhino command to save the current Grasshopper document
                                 _isSaving = true;
-                                Rhino.RhinoApp.RunScript("_GrasshopperSave", true);
+                                var gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper");
+                                if (gh != null)
+                                {
+                                    if (_lastDebug)
+                                    {
+                                        Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Got Grasshopper plugin object: {gh.GetType().Name}");
+                                    }
+                                    try
+                                    {
+                                        gh.GetType().InvokeMember("SaveDocument", 
+                                            System.Reflection.BindingFlags.InvokeMethod, 
+                                            null, gh, null);
+                                        if (_lastDebug)
+                                        {
+                                            Rhino.RhinoApp.WriteLine("[WireDisplayManager] SaveDocument called successfully");
+                                        }
+                                    }
+                                    catch (Exception saveEx)
+                                    {
+                                        if (_lastDebug)
+                                        {
+                                            Rhino.RhinoApp.WriteLine($"[WireDisplayManager] SaveDocument failed: {saveEx.Message}");
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    if (_lastDebug)
+                                    {
+                                        Rhino.RhinoApp.WriteLine("[WireDisplayManager] Failed to get Grasshopper plugin object");
+                                    }
+                                }
                                 _isSaving = false;
                             }
                         }
@@ -208,8 +317,6 @@ namespace VibeTest
                 }
             }
         }
-
-
 
         private void ProcessWiresSafe()
         {
