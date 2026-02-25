@@ -115,18 +115,20 @@ namespace VibeTest
         private double _hiddenThreshold;
         private float _spatialGridSize;
         private bool _debug;
+        private bool _skipUndo;
         private Dictionary<Guid, GH_ParamWireDisplay> _modifiedWires;
         private StringBuilder _debugLog;
         private int _wireCount;
         private int _modifiedCount;
 
-        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, float spatialGridSize, bool debug)
+        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, float spatialGridSize, bool debug, bool skipUndo = false)
         {
             _document = document;
             _faintThreshold = faintThreshold;
             _hiddenThreshold = hiddenThreshold;
             _spatialGridSize = spatialGridSize;
             _debug = debug;
+            _skipUndo = skipUndo;
             _modifiedWires = new Dictionary<Guid, GH_ParamWireDisplay>();
             _debugLog = new StringBuilder();
             _wireCount = 0;
@@ -688,9 +690,12 @@ namespace VibeTest
         {
             if (param == null || _document == null) return;
 
-            var record = new GH_UndoRecord("Set Wire Display");
-            record.AddAction(new GH_WireDisplayAction(param));
-            _document.UndoServer.PushUndoRecord(record);
+            if (!_skipUndo)
+            {
+                var record = new GH_UndoRecord("Set Wire Display");
+                record.AddAction(new GH_WireDisplayAction(param));
+                _document.UndoServer.PushUndoRecord(record);
+            }
 
             param.WireDisplay = newMode;
         }
@@ -699,9 +704,12 @@ namespace VibeTest
         {
             if (param == null || _document == null) return;
 
-            var record = new GH_UndoRecord("Restore Wire Display");
-            record.AddAction(new GH_WireDisplayAction(param));
-            _document.UndoServer.PushUndoRecord(record);
+            if (!_skipUndo)
+            {
+                var record = new GH_UndoRecord("Restore Wire Display");
+                record.AddAction(new GH_WireDisplayAction(param));
+                _document.UndoServer.PushUndoRecord(record);
+            }
 
             param.WireDisplay = originalMode;
         }

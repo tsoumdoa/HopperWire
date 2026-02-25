@@ -97,7 +97,7 @@ namespace VibeTest
             if (settingsChanged || refreshTriggered || (_autoUpdate && _wireMonitor == null))
             {
                 _wireMonitor?.Dispose();
-                _wireMonitor = new WireMonitor(doc, faintThreshold, hiddenThreshold, (float)spatialGridSize, debug);
+                _wireMonitor = new WireMonitor(doc, faintThreshold, hiddenThreshold, (float)spatialGridSize, debug, _autoUpdate);
                 ProcessWiresSafe();
             }
 
@@ -262,6 +262,14 @@ namespace VibeTest
                         try
                         {
                             var saveDoc = OnPingDocument();
+                            if (saveDoc != null)
+                            {
+                                saveDoc.IsModified = true;
+                                if (_lastDebug)
+                                {
+                                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Marked document as modified before saving");
+                                }
+                            }
                             bool isModified = (saveDoc != null) && saveDoc.IsModified;
                             if (isModified)
                             {
@@ -277,11 +285,13 @@ namespace VibeTest
                                     {
                                         Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Got Grasshopper plugin object: {gh.GetType().Name}");
                                     }
+                                    bool saveSuccess = false;
                                     try
                                     {
                                         gh.GetType().InvokeMember("SaveDocument", 
                                             System.Reflection.BindingFlags.InvokeMethod, 
                                             null, gh, null);
+                                        saveSuccess = true;
                                         if (_lastDebug)
                                         {
                                             Rhino.RhinoApp.WriteLine("[WireDisplayManager] SaveDocument called successfully");
@@ -292,6 +302,21 @@ namespace VibeTest
                                         if (_lastDebug)
                                         {
                                             Rhino.RhinoApp.WriteLine($"[WireDisplayManager] SaveDocument failed: {saveEx.Message}");
+                                        }
+                                    }
+                                    
+                                    if (saveSuccess && saveDoc != null)
+                                    {
+                                        if (_lastDebug)
+                                        {
+                                            Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Save succeeded, marking document as saved");
+                                        }
+                                        
+                                        saveDoc.IsModified = false;
+                                        
+                                        if (_lastDebug)
+                                        {
+                                            Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Document IsModified after save: {saveDoc.IsModified}");
                                         }
                                     }
                                 }
