@@ -16,7 +16,7 @@
   
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
-    <Version>1.0</Version>
+    <Version>0.3.5</Version>
     <Title>HopperWire</Title>
     <Company>AECTooling</Company>
     <Description>Description of HopperWire</Description>
