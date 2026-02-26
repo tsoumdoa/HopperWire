@@ -6,7 +6,7 @@ using Grasshopper.Kernel;
 using Grasshopper.Kernel.Undo;
 using Grasshopper.Kernel.Undo.Actions;
 
-namespace VibeTest
+namespace HopperWire
 {
     public class WireInfo
     {

@@ -17,9 +17,9 @@
   <PropertyGroup>
     <!-- Specifies information for Assembly and Yak -->
     <Version>1.0</Version>
-    <Title>VibeTest</Title>
-    <Company>VibeTest Authors</Company>
-    <Description>Description of VibeTest</Description>
+    <Title>HopperWire</Title>
+    <Company>AECTooling</Company>
+    <Description>Description of HopperWire</Description>
     <AssemblyIcon>icon.png</AssemblyIcon>
   </PropertyGroup>
   

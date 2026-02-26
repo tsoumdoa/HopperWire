@@ -1,7 +1,7 @@
 using System;
 using Grasshopper.Kernel;
 
-namespace VibeTest
+namespace HopperWire
 {
     public struct WireDisplayState
     {

@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Drawing;
 using Grasshopper.Kernel;
 
-namespace VibeTest
+namespace HopperWire
 {
-    public class WireDisplayManager : GH_Component
+    public class HopperWire : GH_Component
     {
         private WireMonitor _wireMonitor;
         private double _lastFaintThreshold = 800;
@@ -21,8 +21,8 @@ namespace VibeTest
 
 
 
-        public WireDisplayManager()
-          : base("Wire Display Manager", "WireDisplay",
+        public HopperWire()
+          : base("Hopper Wire", "HopperWire",
             "Automatically manages wire display based on length thresholds",
             "Params", "Util")
         {

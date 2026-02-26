@@ -3,11 +3,11 @@ using System.Drawing;
 using Grasshopper;
 using Grasshopper.Kernel;
 
-namespace VibeTest
+namespace HopperWire
 {
-    public class VibeTestInfo : GH_AssemblyInfo
+    public class HopperWireInfo : GH_AssemblyInfo
     {
-        public override string Name => "VibeTest";
+        public override string Name => "HopperWire";
 
         //Return a 24x24 pixel bitmap to represent this GHA library.
         public override Bitmap Icon => null;
@@ -16,7 +16,7 @@ namespace VibeTest
         public override string Description => "Wire display management plugin for Grasshopper";
 
         //Return a string identifying you or your company.
-        public override string AuthorName => "VibeTest";
+        public override string AuthorName => "AEC Tooling";
 
         //Return a string representing your preferred contact details.
         public override string AuthorContact => "";
