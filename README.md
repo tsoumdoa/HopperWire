@@ -1,4 +1,4 @@
-# VibeTest - Wire Display Manager for Grasshopper
+# HopperWire - Wire Display Manager for Grasshopper
 
 A Grasshopper plugin that manually triggers wire display updates based on length thresholds, with full undo/redo support and debug logging.
 
