@@ -1,8 +1,8 @@
 ---
 name: hopperwire
-version: 0.3.5
+version: 0.5.0
 authors:
-  - TomoS
+  - aectooling by tomoS
 description: >
   HopperWire is a Grasshopper plugin that manually triggers wire display 
   updates based on length thresholds, with full undo/redo support and 
