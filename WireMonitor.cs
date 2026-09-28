@@ -194,7 +194,7 @@ namespace HopperWire
             _wireCount = 0;
             _modifiedCount = 0;
             
-            var processedConnections = new HashSet<(Guid, Guid)>();
+            var seenConnections = new HashSet<(Guid, Guid)>();
             
             // Collect ALL unique connections (source -> target pairs)
             var allConnections = new List<KeyValuePair<IGH_Param, IGH_Param>>();
@@ -222,7 +222,7 @@ namespace HopperWire
                 // Process floating parameters directly in the document
                 if (obj is IGH_Param param)
                 {
-                    AddParamConnections(param, allConnections);
+                    AddParamConnections(param, allConnections, seenConnections);
                 }
                 
                 // Process component parameters (nested inputs/outputs)
@@ -230,11 +230,11 @@ namespace HopperWire
                 {
                     foreach (var input in component.Params.Input)
                     {
-                        AddParamConnections(input, allConnections);
+                        AddParamConnections(input, allConnections, seenConnections);
                     }
                     foreach (var output in component.Params.Output)
                     {
-                        AddParamConnections(output, allConnections);
+                        AddParamConnections(output, allConnections, seenConnections);
                     }
                 }
             }
@@ -246,6 +246,9 @@ namespace HopperWire
 
             // Build wire info list for crossing detection
             var wireInfos = BuildWireInfoList(allConnections);
+            var wireLengths = new Dictionary<(Guid, Guid), double>();
+            foreach (var wire in wireInfos)
+                wireLengths.Add((wire.Source.InstanceGuid, wire.Target.InstanceGuid), wire.Length);
             var layoutFaintReasons = FindLayoutFaintReasons(wireInfos);
             
             if (_debug)
@@ -369,7 +372,8 @@ namespace HopperWire
             // Now process each unique connection with crossing info
             foreach (var kvp in allConnections)
             {
-                ProcessConnection(kvp.Key, kvp.Value, targetModes, targets, processedConnections,
+                wireLengths.TryGetValue((kvp.Value.InstanceGuid, kvp.Key.InstanceGuid), out var length);
+                ProcessConnection(kvp.Key, kvp.Value, length, targetModes, targets,
                     wiresToFaintFromCrossing, layoutFaintReasons);
             }
 
@@ -481,24 +485,33 @@ namespace HopperWire
                 groupsByOwner.TryGetValue(sourceOwner, out var sourceGroups);
                 groupsByOwner.TryGetValue(targetOwner, out var targetGroups);
 
-                var labels = new List<string>();
-                if (WireLayoutRules.CrossesGroupBoundary(sourceGroups, targetGroups))
-                    labels.Add("group boundary");
-                if (WireLayoutRules.IsBackward(wire.P0, wire.P3))
-                    labels.Add("backward flow");
-                foreach (var component in componentBounds)
+                bool groupBoundary = WireLayoutRules.CrossesGroupBoundary(sourceGroups, targetGroups);
+                bool backward = WireLayoutRules.IsBackward(wire.P0, wire.P3);
+                bool throughComponent = false;
+                if (_debug || (!groupBoundary && !backward))
                 {
-                    if (component.Id == sourceOwner || component.Id == targetOwner ||
-                        !component.Bounds.IntersectsWith(wire.Bounds))
-                        continue;
-                    if (WireLayoutRules.PassesThroughRectangle(wire.GetSegmentPoints(), component.Bounds))
+                    foreach (var component in componentBounds)
                     {
-                        labels.Add("through component");
-                        break;
+                        if (component.Id == sourceOwner || component.Id == targetOwner ||
+                            !component.Bounds.IntersectsWith(wire.Bounds))
+                            continue;
+                        if (WireLayoutRules.PassesThroughRectangle(wire.GetSegmentPoints(), component.Bounds))
+                        {
+                            throughComponent = true;
+                            break;
+                        }
                     }
                 }
-                if (labels.Count > 0)
+                if (!groupBoundary && !backward && !throughComponent) continue;
+                if (_debug)
+                {
+                    var labels = new List<string>();
+                    if (groupBoundary) labels.Add("group boundary");
+                    if (backward) labels.Add("backward flow");
+                    if (throughComponent) labels.Add("through component");
                     reasons[wire.Target.InstanceGuid] = string.Join(", ", labels);
+                }
+                else reasons[wire.Target.InstanceGuid] = "";
             }
             return reasons;
         }
@@ -506,13 +519,11 @@ namespace HopperWire
         private List<WireInfo> BuildWireInfoList(List<KeyValuePair<IGH_Param, IGH_Param>> connections)
         {
             var wireInfos = new List<WireInfo>();
-            var seen = new HashSet<(Guid, Guid)>();
             
             foreach (var kvp in connections)
             {
                 var target = kvp.Key;
                 var source = kvp.Value;
-                if (!seen.Add((source.InstanceGuid, target.InstanceGuid))) continue;
                 
                 if (source?.Attributes == null || target?.Attributes == null)
                     continue;
@@ -637,21 +648,10 @@ namespace HopperWire
                    ((ba1 > 0 && ba2 < 0) || (ba1 < 0 && ba2 > 0));
         }
 
-        private void ProcessConnection(IGH_Param target, IGH_Param source, Dictionary<Guid, GH_ParamWireDisplay> targetModes, Dictionary<Guid, IGH_Param> targets, HashSet<(Guid, Guid)> processedConnections, HashSet<Guid> wiresToFaintFromCrossing, Dictionary<Guid, string> layoutFaintReasons)
+        private void ProcessConnection(IGH_Param target, IGH_Param source, double length,
+            Dictionary<Guid, GH_ParamWireDisplay> targetModes, Dictionary<Guid, IGH_Param> targets,
+            HashSet<Guid> wiresToFaintFromCrossing, Dictionary<Guid, string> layoutFaintReasons)
         {
-            var connectionId = (source.InstanceGuid, target.InstanceGuid);
-            
-            if (processedConnections.Contains(connectionId))
-            {
-                if (_debug)
-                {
-                    Log($"  Skipping duplicate wire: {source.NickName} -> {target.NickName}");
-                }
-                return;
-            }
-
-            processedConnections.Add(connectionId);
-            double length = CalculateWireLength(source, target);
             _wireCount++;
 
             bool crossing = wiresToFaintFromCrossing.Contains(target.InstanceGuid);
@@ -688,6 +688,8 @@ namespace HopperWire
 
             if (mode == GH_ParamWireDisplay.@default)
                 mode = original;
+            else if (mode < original)
+                mode = original; // Keep a user's more restrictive display choice.
 
             if (target.WireDisplay != mode)
             {
@@ -707,7 +709,8 @@ namespace HopperWire
             }
         }
 
-        private void AddParamConnections(IGH_Param param, List<KeyValuePair<IGH_Param, IGH_Param>> connections)
+        private void AddParamConnections(IGH_Param param, List<KeyValuePair<IGH_Param, IGH_Param>> connections,
+            HashSet<(Guid, Guid)> seen)
         {
             if (param == null) return;
             
@@ -716,55 +719,12 @@ namespace HopperWire
                 for (int i = 0; i < param.SourceCount; i++)
                 {
                     var source = param.Sources[i];
-                    if (source != null)
+                    if (source != null && seen.Add((source.InstanceGuid, param.InstanceGuid)))
                     {
                         connections.Add(new KeyValuePair<IGH_Param, IGH_Param>(param, source));
                     }
                 }
             }
-        }
-
-        private double CalculateWireLength(IGH_Param source, IGH_Param target)
-        {
-            if (source?.Attributes == null || target?.Attributes == null)
-                return 0;
-
-            var sourceGrip = source.Attributes.OutputGrip;
-            var targetGrip = target.Attributes.InputGrip;
-
-            // Approximate wire as a cubic Bezier curve
-            // P0 = source grip (start)
-            // P3 = target grip (end)
-            // P1, P2 = control points that create the curved shape
-
-            PointF p0 = sourceGrip;
-            PointF p3 = targetGrip;
-
-            // Calculate horizontal distance
-            double dx = p3.X - p0.X;
-            double dy = p3.Y - p0.Y;
-
-            // Control points are typically placed at horizontal intervals
-            // For a smooth curve from left to right or right to left
-            double controlOffset = Math.Abs(dx) * 0.3;
-
-            PointF p1, p2;
-
-            if (dx > 0)
-            {
-                // Flowing right
-                p1 = new PointF(p0.X + (float)controlOffset, p0.Y);
-                p2 = new PointF(p3.X - (float)controlOffset, p3.Y);
-            }
-            else
-            {
-                // Flowing left
-                p1 = new PointF(p0.X - (float)controlOffset, p0.Y);
-                p2 = new PointF(p3.X + (float)controlOffset, p3.Y);
-            }
-
-            // Calculate Bezier curve length by sampling points along it
-            return CalculateBezierLength(p0, p1, p2, p3, 20);
         }
 
         private double CalculateBezierLength(PointF p0, PointF p1, PointF p2, PointF p3, int segments)

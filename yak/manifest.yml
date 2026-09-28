@@ -6,7 +6,7 @@ authors:
 description: >
   HopperWire adjusts Grasshopper wire display based on curve length, crossings,
   group boundaries, backward paths, and paths through components. It supports
-  automatic canvas updates, manual refresh, and configurable thresholds.
+  updates on document save, manual refresh, and configurable thresholds.
 url: https://github.com/tsoumdoa/HopperWire
 icon: icon.png
 keywords:

@@ -11,7 +11,7 @@ Place **Hopper Wire** from **Params > Util** on a Grasshopper canvas. Its inputs
 | Faint Threshold | 800 | Longer wires become faint |
 | Hidden Threshold | 1500 | Longer wires become hidden |
 | Spatial Grid Size | 200 | Cell size used to find crossing candidates |
-| Auto Update | true | Recheck when the active canvas changes or the document's modified flag changes |
+| Auto Update | true | Recheck layout when the Grasshopper document is saved |
 | Refresh | false | Recheck on a false-to-true transition |
 | Debug | false | Include processing details in the Log output |
 
@@ -30,9 +30,9 @@ At or below Faint Threshold, any of these layout conditions makes a connection f
 
 Only length can make a new wire **hidden**. Group, backward, and through-component rules apply only to inputs with one source. Grasshopper has one display setting per target parameter, even if several sources connect to it, so HopperWire chooses the most restrictive result among their length and crossing results: **hidden > faint > default**. Crossing and curve measurements are approximate.
 
-When a wire no longer needs a changed display, HopperWire restores the parameter's prior setting while the component is active. It retains wire display changes if the component is removed. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records. HopperWire does not save documents automatically.
+When a wire no longer needs a changed display, HopperWire restores the parameter's prior setting while the component is active. A user's more restrictive display choice is preserved. It retains wire display changes if the component is removed. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records.
 
-Auto Update observes changes on the active canvas. In a headless or inactive canvas, use Refresh or recompute the component to apply changes.
+Auto Update checks the layout after a save. If that check changes wire displays, HopperWire saves the document again to persist them. Use Refresh for an immediate update without saving.
 
 ## Build
 

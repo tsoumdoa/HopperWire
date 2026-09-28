@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using Grasshopper;
-using Grasshopper.GUI.Canvas;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Special;
 
@@ -16,12 +14,13 @@ namespace HopperWire
         private WireMonitor _monitor;
         private GH_Document _monitorDocument;
         private GH_Document _document;
-        private GH_Canvas _canvas;
         private readonly Dictionary<Guid, RectangleF> _bounds = new Dictionary<Guid, RectangleF>();
         private readonly HashSet<(Guid, Guid)> _connections = new HashSet<(Guid, Guid)>();
         private readonly HashSet<(Guid, Guid)> _groupMembership = new HashSet<(Guid, Guid)>();
         private double _lastFaint = DefaultFaint, _lastHidden = DefaultHidden, _lastGrid = DefaultGrid;
-        private bool _lastDebug, _lastRefresh, _autoUpdate, _processing;
+        private bool _lastDebug, _lastRefresh, _autoUpdate, _processing, _saving;
+        private bool _snapshotReady;
+        private string _processError;
 
         public HopperWire() : base("Hopper Wire", "HopperWire",
             "Manage wire display by length and canvas layout", "Params", "Util") { }
@@ -31,7 +30,7 @@ namespace HopperWire
             p.AddNumberParameter("Faint Threshold", "Faint", "Faint above this canvas length", GH_ParamAccess.item, DefaultFaint);
             p.AddNumberParameter("Hidden Threshold", "Hidden", "Hide above this canvas length", GH_ParamAccess.item, DefaultHidden);
             p.AddNumberParameter("Spatial Grid Size", "Grid", "Cell size for crossing detection", GH_ParamAccess.item, DefaultGrid);
-            p.AddBooleanParameter("Auto Update", "Auto", "Update when the canvas changes", GH_ParamAccess.item, true);
+            p.AddBooleanParameter("Auto Update", "Auto", "Check for layout changes when the document is saved", GH_ParamAccess.item, true);
             p.AddBooleanParameter("Refresh", "Refresh", "Toggle false to true to update", GH_ParamAccess.item, false);
             p.AddBooleanParameter("Debug", "Debug", "Include detailed processing messages", GH_ParamAccess.item, false);
         }
@@ -91,8 +90,10 @@ namespace HopperWire
             else Unsubscribe();
             if (settingsChanged || refreshTriggered || (auto && (newMonitor || autoChanged)))
                 Process(doc, false);
-            da.SetData(0, $"Processed {_monitor.GetWireCount()} wires, {_monitor.GetModifiedCount()} changed" +
-                          (auto ? " (Auto update ON)" : ""));
+            da.SetData(0, _processError == null
+                ? $"Processed {_monitor.GetWireCount()} wires, {_monitor.GetModifiedCount()} changed" +
+                  (auto ? " (Auto update ON)" : "")
+                : $"Error: {_processError}");
             da.SetData(1, _monitor.GetDebugLog());
         }
 
@@ -106,39 +107,65 @@ namespace HopperWire
                 _document = doc;
                 doc.ModifiedChanged += OnModifiedChanged;
             }
-            var canvas = Instances.ActiveCanvas;
-            if (_canvas != canvas)
-            {
-                if (_canvas != null) _canvas.CanvasPaintEnd -= OnCanvasPaintEnd;
-                _canvas = canvas;
-                if (canvas != null) canvas.CanvasPaintEnd += OnCanvasPaintEnd;
-            }
         }
 
         private void Unsubscribe()
         {
             if (_document != null) _document.ModifiedChanged -= OnModifiedChanged;
-            if (_canvas != null) _canvas.CanvasPaintEnd -= OnCanvasPaintEnd;
-            _document = null; _canvas = null;
+            _document = null;
             _bounds.Clear(); _connections.Clear();
             _groupMembership.Clear();
+            _snapshotReady = false;
         }
 
         private void OnModifiedChanged(object sender, GH_DocModifiedEventArgs e)
         {
-            if (e.Modified) RefreshIfChanged(sender as GH_Document);
+            var doc = sender as GH_Document;
+            if (e.Modified || !_autoUpdate || _processing || _saving || Locked ||
+                doc == null || doc != _document || doc != OnPingDocument()) return;
+            if (!HasCanvasChanged(doc) || !Process(doc, true) || _monitor.GetModifiedCount() == 0)
+                return;
+            SaveAfterUpdate(doc);
         }
 
-        private void OnCanvasPaintEnd(GH_Canvas canvas)
+        private void SaveAfterUpdate(GH_Document doc)
         {
-            var doc = OnPingDocument();
-            if (canvas.Document == doc) RefreshIfChanged(doc);
+            _saving = true;
+            try
+            {
+                Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
+                {
+                    try
+                    {
+                        if (doc != OnPingDocument() || !_autoUpdate) return;
+                        if (Grasshopper.Instances.ActiveCanvas?.Document != doc)
+                            throw new InvalidOperationException("This document is no longer active.");
+                        var grasshopper = Rhino.RhinoApp.GetPlugInObject("Grasshopper")
+                            as Grasshopper.Plugin.GH_RhinoScriptInterface;
+                        if (grasshopper == null) throw new InvalidOperationException("Grasshopper save service is unavailable.");
+                        if (!grasshopper.SaveDocument())
+                            throw new InvalidOperationException("Grasshopper did not save the document.");
+                    }
+                    catch (Exception ex)
+                    {
+                        ReportSaveError(doc, ex);
+                    }
+                    finally { _saving = false; }
+                }));
+            }
+            catch (Exception ex)
+            {
+                _saving = false;
+                ReportSaveError(doc, ex);
+            }
         }
 
-        private void RefreshIfChanged(GH_Document doc)
+        private void ReportSaveError(GH_Document doc, Exception ex)
         {
-            if (!_autoUpdate || _processing || Locked || doc == null || doc != _document) return;
-            if (HasCanvasChanged(doc)) Process(doc, true);
+            if (doc != OnPingDocument()) return;
+            _processError = $"Wire changes were applied, but the follow-up save failed: {ex.Message}";
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _processError);
+            ScheduleOutputs(doc);
         }
 
         private bool HasCanvasChanged(GH_Document doc)
@@ -168,7 +195,7 @@ namespace HopperWire
                     }
                 }
             }
-            bool changed = bounds.Count != _bounds.Count || !connections.SetEquals(_connections) ||
+            bool changed = !_snapshotReady || bounds.Count != _bounds.Count || !connections.SetEquals(_connections) ||
                            !groupMembership.SetEquals(_groupMembership);
             if (!changed)
                 foreach (var entry in bounds)
@@ -183,6 +210,7 @@ namespace HopperWire
             _connections.UnionWith(connections);
             _groupMembership.Clear();
             _groupMembership.UnionWith(groupMembership);
+            _snapshotReady = true;
             return changed;
         }
 
@@ -192,26 +220,35 @@ namespace HopperWire
                 if (source != null) connections.Add((source.InstanceGuid, target.InstanceGuid));
         }
 
-        private void Process(GH_Document doc, bool updateOutputs)
+        private bool Process(GH_Document doc, bool updateOutputs)
         {
-            if (_processing || _monitor == null) return;
+            if (_processing || _monitor == null) return false;
             try
             {
                 _processing = true;
+                _processError = null;
                 _monitor.ProcessAllWires();
                 if (_autoUpdate) HasCanvasChanged(doc);
-                if (updateOutputs)
-                {
-                    // Recompute outputs after the paint event, outside the draw call.
-                    ExpireSolution(false);
-                    doc.ScheduleSolution(1);
-                }
+                return true;
             }
             catch (Exception ex)
             {
-                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
+                _snapshotReady = false;
+                _processError = ex.Message;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _processError);
+                return false;
             }
-            finally { _processing = false; }
+            finally
+            {
+                _processing = false;
+                if (updateOutputs) ScheduleOutputs(doc);
+            }
+        }
+
+        private void ScheduleOutputs(GH_Document doc)
+        {
+            ExpireSolution(false);
+            doc.ScheduleSolution(1);
         }
 
         public override void RemovedFromDocument(GH_Document doc)
