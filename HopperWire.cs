@@ -1,418 +1,238 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using Grasshopper.Kernel;
 
 namespace HopperWire
 {
     public class HopperWire : GH_Component
     {
-        private WireMonitor _wireMonitor;
-        private double _lastFaintThreshold = 800;
-        private double _lastHiddenThreshold = 1500;
-        private float _lastSpatialGridSize = 200;
-        private bool _lastDebug = false;
-        private bool _lastRefresh = false;
-        private bool _autoUpdate = false;
-        private GH_Document _subscribedDocument;
-        private bool _isProcessing = false;
-        private bool _isSaving = false;
+        private const double DefaultFaint = 800;
+        private const double DefaultHidden = 1500;
+        private const double DefaultGrid = 200;
+        private WireMonitor _monitor;
+        private GH_Document _monitorDocument;
+        private GH_Document _document;
+        private (string Path, long WriteTicks, long Length)? _lastSavedFile;
+        private double _lastFaint = DefaultFaint, _lastHidden = DefaultHidden, _lastGrid = DefaultGrid;
+        private bool _lastDebug, _lastRefresh, _autoUpdate, _processing, _saving;
+        private string _processError;
 
+        public HopperWire() : base("Hopper Wire", "HopperWire",
+            "Manage wire display by length and canvas layout", "Params", "Util") { }
 
-
-
-        public HopperWire()
-          : base("Hopper Wire", "HopperWire",
-            "Automatically manages wire display based on length thresholds",
-            "Params", "Util")
+        protected override void RegisterInputParams(GH_InputParamManager p)
         {
+            p.AddNumberParameter("Faint Threshold", "Faint", "Faint above this canvas length", GH_ParamAccess.item, DefaultFaint);
+            p.AddNumberParameter("Hidden Threshold", "Hidden", "Hide above this canvas length", GH_ParamAccess.item, DefaultHidden);
+            p.AddNumberParameter("Spatial Grid Size", "Grid", "Cell size for crossing detection", GH_ParamAccess.item, DefaultGrid);
+            p.AddBooleanParameter("Auto Update", "Auto", "Check for layout changes when the document is saved", GH_ParamAccess.item, true);
+            p.AddBooleanParameter("Refresh", "Refresh", "Toggle false to true to update", GH_ParamAccess.item, false);
+            p.AddBooleanParameter("Debug", "Debug", "Include detailed processing messages", GH_ParamAccess.item, false);
         }
 
-        protected override void RegisterInputParams(GH_Component.GH_InputParamManager pManager)
+        protected override void RegisterOutputParams(GH_OutputParamManager p)
         {
-            pManager.AddNumberParameter("Faint Threshold", "Faint", "Wire length threshold for faint display (pixels)", GH_ParamAccess.item, _lastFaintThreshold);
-            pManager.AddNumberParameter("Hidden Threshold", "Hidden", "Wire length threshold for hidden display (pixels)", GH_ParamAccess.item, _lastHiddenThreshold);
-            pManager.AddNumberParameter("Spatial Grid Size", "Grid", "Cell size for spatial grid optimization (pixels)", GH_ParamAccess.item, _lastSpatialGridSize);
-            pManager.AddBooleanParameter("Auto Update", "Auto", "Enable automatic updates when canvas changes", GH_ParamAccess.item, true);
-            pManager.AddBooleanParameter("Refresh", "Refresh", "Click to manually refresh wire displays", GH_ParamAccess.item, false);
-            pManager.AddBooleanParameter("Debug", "Debug", "Enable debug logging", GH_ParamAccess.item, false);
+            p.AddTextParameter("Status", "Status", "Wire monitor status", GH_ParamAccess.item);
+            p.AddTextParameter("Log", "Log", "Debug log", GH_ParamAccess.item);
         }
 
-        protected override void RegisterOutputParams(GH_Component.GH_OutputParamManager pManager)
+        protected override void SolveInstance(IGH_DataAccess da)
         {
-            pManager.AddTextParameter("Status", "Status", "Current status of the wire monitor", GH_ParamAccess.item);
-            pManager.AddTextParameter("Log", "Log", "Debug log messages", GH_ParamAccess.item);
-        }
-
-        protected override void SolveInstance(IGH_DataAccess DA)
-        {
-            double faintThreshold = 900;
-            double hiddenThreshold = 1200;
-            double spatialGridSize = 200;
-            bool autoUpdate = false;
-            bool refresh = false;
-            bool debug = false;
-
-            DA.GetData(0, ref faintThreshold);
-            DA.GetData(1, ref hiddenThreshold);
-            DA.GetData(2, ref spatialGridSize);
-            DA.GetData(3, ref autoUpdate);
-            DA.GetData(4, ref refresh);
-            DA.GetData(5, ref debug);
-
+            double faint = DefaultFaint, hidden = DefaultHidden, grid = DefaultGrid;
+            bool auto = true, refresh = false, debug = false;
+            da.GetData(0, ref faint);
+            da.GetData(1, ref hidden);
+            da.GetData(2, ref grid);
+            da.GetData(3, ref auto);
+            da.GetData(4, ref refresh);
+            da.GetData(5, ref debug);
+            if (!Finite(faint) || faint < 0 || !Finite(hidden) || hidden < faint ||
+                !Finite(grid) || (float)grid <= 0 || grid > float.MaxValue)
+            {
+                _autoUpdate = false;
+                Unsubscribe();
+                const string message = "Use finite thresholds with 0 <= Faint <= Hidden and a positive grid size.";
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
+                da.SetData(0, message);
+                da.SetData(1, "");
+                return;
+            }
             var doc = OnPingDocument();
             if (doc == null)
             {
-                DA.SetData(0, "Error: No document");
-                DA.SetData(1, "");
+                da.SetData(0, "No document");
+                da.SetData(1, "");
                 return;
             }
 
-            var settingsChanged = Math.Abs(faintThreshold - _lastFaintThreshold) > 0.001 || 
-                              Math.Abs(hiddenThreshold - _lastHiddenThreshold) > 0.001 ||
-                              Math.Abs(spatialGridSize - _lastSpatialGridSize) > 0.001 ||
-                              debug != _lastDebug;
+            bool settingsChanged = faint != _lastFaint || hidden != _lastHidden ||
+                                   grid != _lastGrid || debug != _lastDebug;
+            bool autoChanged = auto != _autoUpdate;
+            bool refreshTriggered = refresh && !_lastRefresh;
+            _lastFaint = faint; _lastHidden = hidden; _lastGrid = grid;
+            _lastDebug = debug; _lastRefresh = refresh; _autoUpdate = auto;
 
-            var refreshTriggered = refresh && !_lastRefresh;
-            var autoUpdateChanged = autoUpdate != _autoUpdate;
-
-            if (autoUpdateChanged)
+            // A monitor keeps the original display modes while settings change.
+            bool newMonitor = _monitor == null || _monitorDocument != doc;
+            if (newMonitor)
             {
-                _autoUpdate = autoUpdate;
-                if (autoUpdate)
-                {
-                    SubscribeToDocumentEvents(doc);
-                }
-                else
-                {
-                    UnsubscribeFromDocumentEvents();
-                }
+                _monitor?.Dispose();
+                _monitor = new WireMonitor(doc, faint, hidden, (float)grid, debug, auto);
+                _monitorDocument = doc;
             }
+            else if (settingsChanged || autoChanged)
+                _monitor.UpdateSettings(faint, hidden, (float)grid, debug, auto);
 
-            if (_autoUpdate && _subscribedDocument == null)
-            {
-                SubscribeToDocumentEvents(doc);
-            }
-
-            if (settingsChanged || refreshTriggered || (_autoUpdate && _wireMonitor == null))
-            {
-                _wireMonitor?.Dispose();
-                _wireMonitor = new WireMonitor(doc, faintThreshold, hiddenThreshold, (float)spatialGridSize, debug, _autoUpdate);
-                ProcessWiresSafe();
-            }
-
-            _lastFaintThreshold = faintThreshold;
-            _lastHiddenThreshold = hiddenThreshold;
-            _lastSpatialGridSize = (float)spatialGridSize;
-            _lastDebug = debug;
-            _lastRefresh = refresh;
-
-            string status;
-            if (_wireMonitor != null)
-            {
-                var wireCount = _wireMonitor.GetWireCount();
-                var modifiedCount = _wireMonitor.GetModifiedCount();
-                status = $"Processed {wireCount} wires, {modifiedCount} modified";
-                if (_autoUpdate)
-                {
-                    status += " (Auto-update ON)";
-                }
-            }
-            else
-            {
-                status = _autoUpdate ? "Auto-update ON - Processing..." : "Ready - Toggle Refresh to update";
-            }
-            
-            DA.SetData(0, status);
-            DA.SetData(1, _wireMonitor?.GetDebugLog() ?? "");
+            if (auto) Subscribe(doc);
+            else Unsubscribe();
+            if (settingsChanged || refreshTriggered || (auto && (newMonitor || autoChanged)))
+                Process(doc, false);
+            da.SetData(0, _processError == null
+                ? $"Processed {_monitor.GetWireCount()} wires, {_monitor.GetModifiedCount()} changed" +
+                  (auto ? " (Auto update ON)" : "")
+                : $"Error: {_processError}");
+            da.SetData(1, _monitor.GetDebugLog());
         }
 
+        private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 
-
-        private void SubscribeToDocumentEvents(GH_Document doc)
+        private void Subscribe(GH_Document doc)
         {
-            if (_subscribedDocument == doc) return;
-            
-            UnsubscribeFromDocumentEvents();
-            
-            _subscribedDocument = doc;
-            _subscribedDocument.ModifiedChanged += OnDocumentModifiedChanged;
-            
-            if (_lastDebug)
+            if (_document != doc)
             {
-                Rhino.RhinoApp.WriteLine("[WireDisplayManager] Subscribed to document save events");
+                Unsubscribe();
+                _document = doc;
+                _lastSavedFile = GetFileStamp(doc);
+                doc.ModifiedChanged += OnModifiedChanged;
             }
         }
 
-        private void UnsubscribeFromDocumentEvents()
+        private void Unsubscribe()
         {
-            if (_subscribedDocument == null) return;
-            
-            _subscribedDocument.ModifiedChanged -= OnDocumentModifiedChanged;
-            
-            if (_lastDebug)
-            {
-                Rhino.RhinoApp.WriteLine("[WireDisplayManager] Unsubscribed from document save events");
-            }
-            
-            _subscribedDocument = null;
+            if (_document != null) _document.ModifiedChanged -= OnModifiedChanged;
+            _document = null;
+            _lastSavedFile = null;
         }
 
-        private int _lastObjectCount = 0;
-        private HashSet<Guid> _lastObjectIds = new HashSet<Guid>();
-        private Dictionary<Guid, RectangleF> _lastObjectBounds = new Dictionary<Guid, RectangleF>();
-        private int _lastConnectionCount = 0;
-
-        private bool HasCanvasChanged(GH_Document doc)
+        private void OnModifiedChanged(object sender, GH_DocModifiedEventArgs e)
         {
-            if (doc == null) return false;
-
-            int currentObjectCount = doc.ObjectCount;
-            
-            var currentObjectIds = new HashSet<Guid>();
-            int currentConnectionCount = 0;
-            var currentBounds = new Dictionary<Guid, RectangleF>();
-            
-            foreach (var obj in doc.Objects)
-            {
-                if (obj == null) continue;
-                
-                currentObjectIds.Add(obj.InstanceGuid);
-                
-                if (obj is IGH_Component comp)
-                {
-                    if (comp.Attributes != null)
-                    {
-                        currentBounds[obj.InstanceGuid] = comp.Attributes.Bounds;
-                    }
-                }
-                else if (obj is IGH_Param param)
-                {
-                    if (param.Attributes != null)
-                    {
-                        currentBounds[obj.InstanceGuid] = param.Attributes.Bounds;
-                    }
-                    
-                    currentConnectionCount += param.SourceCount;
-                }
-            }
-            
-            bool objectCountChanged = currentObjectCount != _lastObjectCount;
-            bool objectIdsChanged = !currentObjectIds.SetEquals(_lastObjectIds);
-            
-            bool boundsChanged = false;
-            foreach (var kvp in currentBounds)
-            {
-                if (_lastObjectBounds.TryGetValue(kvp.Key, out var lastBounds))
-                {
-                    if (!lastBounds.Equals(kvp.Value))
-                    {
-                        boundsChanged = true;
-                        break;
-                    }
-                }
-                else
-                {
-                    boundsChanged = true;
-                    break;
-                }
-            }
-            
-            bool connectionsChanged = currentConnectionCount != _lastConnectionCount;
-            
-            _lastObjectCount = currentObjectCount;
-            _lastObjectIds = currentObjectIds;
-            _lastObjectBounds = currentBounds;
-            _lastConnectionCount = currentConnectionCount;
-            
-            return objectCountChanged || objectIdsChanged || boundsChanged || connectionsChanged;
+            var doc = sender as GH_Document;
+            if (e.Modified || !_autoUpdate || _processing || _saving || Locked ||
+                doc == null || doc != _document || doc != OnPingDocument()) return;
+            var stamp = GetFileStamp(doc);
+            if (stamp == null || stamp == _lastSavedFile) return;
+            _lastSavedFile = stamp;
+            if (!Process(doc, true) || _monitor.GetModifiedCount() == 0)
+                return;
+            SaveAfterUpdate(doc);
         }
 
-        private void OnDocumentModifiedChanged(object sender, GH_DocModifiedEventArgs e)
+        private static (string Path, long WriteTicks, long Length)? GetFileStamp(GH_Document doc)
         {
-            if (!_autoUpdate || _isProcessing || _isSaving || this.Locked) return;
-            
-            if (!e.Modified)
-            {
-                var doc = OnPingDocument();
-                if (doc == null) return;
-                
-                if (!HasCanvasChanged(doc))
-                {
-                    if (_lastDebug)
-                    {
-                        Rhino.RhinoApp.WriteLine("[WireDisplayManager] Document saved but no canvas changes - skipping wire processing");
-                    }
-                    return;
-                }
-                
-                if (_lastDebug)
-                {
-                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Document saved with canvas changes - processing wires");
-                }
-                
-                ProcessWiresSafe();
-                
-                bool madeChanges = _wireMonitor != null && _wireMonitor.GetModifiedCount() > 0;
-                
-                if (madeChanges)
-                {
-                    Rhino.RhinoApp.InvokeOnUiThread((System.Action)delegate
-                    {
-                        try
-                        {
-                            var saveDoc = OnPingDocument();
-                            if (saveDoc != null)
-                            {
-                                saveDoc.IsModified = true;
-                                if (_lastDebug)
-                                {
-                                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Marked document as modified before saving");
-                                }
-                            }
-                            bool isModified = (saveDoc != null) && saveDoc.IsModified;
-                            if (isModified)
-                            {
-                                if (_lastDebug)
-                                {
-                                    Rhino.RhinoApp.WriteLine("[WireDisplayManager] Saving document to persist wire changes");
-                                }
-                                _isSaving = true;
-                                var gh = Rhino.RhinoApp.GetPlugInObject("Grasshopper");
-                                if (gh != null)
-                                {
-                                    if (_lastDebug)
-                                    {
-                                        Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Got Grasshopper plugin object: {gh.GetType().Name}");
-                                    }
-                                    bool saveSuccess = false;
-                                    try
-                                    {
-                                        gh.GetType().InvokeMember("SaveDocument", 
-                                            System.Reflection.BindingFlags.InvokeMethod, 
-                                            null, gh, null);
-                                        saveSuccess = true;
-                                        if (_lastDebug)
-                                        {
-                                            Rhino.RhinoApp.WriteLine("[WireDisplayManager] SaveDocument called successfully");
-                                        }
-                                    }
-                                    catch (Exception saveEx)
-                                    {
-                                        if (_lastDebug)
-                                        {
-                                            Rhino.RhinoApp.WriteLine($"[WireDisplayManager] SaveDocument failed: {saveEx.Message}");
-                                        }
-                                    }
-                                    
-                                    if (saveSuccess && saveDoc != null)
-                                    {
-                                        if (_lastDebug)
-                                        {
-                                            Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Save succeeded, marking document as saved");
-                                        }
-                                        
-                                        saveDoc.IsModified = false;
-                                        
-                                        if (_lastDebug)
-                                        {
-                                            Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Document IsModified after save: {saveDoc.IsModified}");
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    if (_lastDebug)
-                                    {
-                                        Rhino.RhinoApp.WriteLine("[WireDisplayManager] Failed to get Grasshopper plugin object");
-                                    }
-                                }
-                                _isSaving = false;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _isSaving = false;
-                            if (_lastDebug)
-                            {
-                                Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Error saving document: {ex.Message}");
-                            }
-                        }
-                    });
-                }
-            }
-        }
-
-        private void ProcessWiresSafe()
-        {
-            if (_isProcessing || _wireMonitor == null) return;
-            
+            if (string.IsNullOrEmpty(doc.FilePath)) return null;
             try
             {
-                _isProcessing = true;
-                _wireMonitor.ProcessAllWires();
-                
-                Rhino.RhinoApp.InvokeOnUiThread((System.Action)delegate
+                var file = new FileInfo(doc.FilePath);
+                return file.Exists ? (file.FullName, file.LastWriteTimeUtc.Ticks, file.Length) :
+                    ((string Path, long WriteTicks, long Length)?)null;
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (ArgumentException) { return null; }
+        }
+
+        private void SaveAfterUpdate(GH_Document doc)
+        {
+            _saving = true;
+            try
+            {
+                Rhino.RhinoApp.InvokeOnUiThread((Action)(() =>
                 {
                     try
                     {
-                        ExpireSolution(true);
+                        if (doc != OnPingDocument() || !_autoUpdate) return;
+                        if (Grasshopper.Instances.ActiveCanvas?.Document != doc)
+                            throw new InvalidOperationException("This document is no longer active.");
+                        var grasshopper = Rhino.RhinoApp.GetPlugInObject("Grasshopper")
+                            as Grasshopper.Plugin.GH_RhinoScriptInterface;
+                        if (grasshopper == null) throw new InvalidOperationException("Grasshopper save service is unavailable.");
+                        if (!grasshopper.SaveDocument())
+                            throw new InvalidOperationException("Grasshopper did not save the document.");
+                        _lastSavedFile = GetFileStamp(doc);
                     }
-                    catch { }
-                });
+                    catch (Exception ex)
+                    {
+                        ReportSaveError(doc, ex);
+                    }
+                    finally { _saving = false; }
+                }));
             }
             catch (Exception ex)
             {
-                if (_lastDebug)
-                {
-                    Rhino.RhinoApp.WriteLine($"[WireDisplayManager] Error: {ex.Message}");
-                }
+                _saving = false;
+                ReportSaveError(doc, ex);
+            }
+        }
+
+        private void ReportSaveError(GH_Document doc, Exception ex)
+        {
+            if (doc != OnPingDocument()) return;
+            _processError = $"Wire changes were applied, but the follow-up save failed: {ex.Message}";
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _processError);
+            ScheduleOutputs(doc);
+        }
+
+        private bool Process(GH_Document doc, bool updateOutputs)
+        {
+            if (_processing || _monitor == null) return false;
+            try
+            {
+                _processing = true;
+                _processError = null;
+                _monitor.ProcessAllWires();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _processError = ex.Message;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _processError);
+                return false;
             }
             finally
             {
-                _isProcessing = false;
+                _processing = false;
+                if (updateOutputs) ScheduleOutputs(doc);
             }
         }
 
-        public override void AddedToDocument(GH_Document document)
+        private void ScheduleOutputs(GH_Document doc)
         {
-            base.AddedToDocument(document);
-            
-            if (_autoUpdate)
-            {
-                SubscribeToDocumentEvents(document);
-            }
+            ExpireSolution(false);
+            doc.ScheduleSolution(1);
         }
 
-        public override void RemovedFromDocument(GH_Document document)
+        public override void RemovedFromDocument(GH_Document doc)
         {
-            UnsubscribeFromDocumentEvents();
-            _wireMonitor?.Dispose();
-            _wireMonitor = null;
-            base.RemovedFromDocument(document);
+            Unsubscribe();
+            _monitor?.Dispose();
+            _monitor = null;
+            _monitorDocument = null;
+            base.RemovedFromDocument(doc);
         }
 
-        protected override System.Drawing.Bitmap Icon
+        protected override Bitmap Icon
         {
             get
             {
-                var assembly = System.Reflection.Assembly.GetExecutingAssembly();
-                var resourceNames = assembly.GetManifestResourceNames();
-                
-                foreach (var resourceName in resourceNames)
-                {
-                    if (resourceName.EndsWith("icon.png"))
-                    {
-                        using (var stream = assembly.GetManifestResourceStream(resourceName))
-                        {
-                            if (stream != null)
-                            {
-                                return new System.Drawing.Bitmap(stream);
-                            }
-                        }
-                    }
-                }
-                
+#if NET7_0
+                if (!OperatingSystem.IsWindows()) return null;
+#endif
+                var assembly = GetType().Assembly;
+                foreach (var name in assembly.GetManifestResourceNames())
+                    if (name.EndsWith("icon.png", StringComparison.OrdinalIgnoreCase))
+                        using (var stream = assembly.GetManifestResourceStream(name))
+                            if (stream != null) return new Bitmap(stream);
                 return null;
             }
         }
