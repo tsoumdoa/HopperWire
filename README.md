@@ -1,197 +1,39 @@
-# HopperWire - Wire Display Manager for Grasshopper
+# HopperWire
 
-A Grasshopper plugin that manually triggers wire display updates based on length thresholds, with full undo/redo support and debug logging.
+HopperWire is a Grasshopper component that keeps local connections clear and reduces the visual weight of long or awkward paths.
 
-## Features
+## Use
 
-- **Manual Trigger**: Click the Refresh button to update wire displays (no complex event listening!)
-- **Two-Level Thresholds**: Separate thresholds for Faint and Hidden display modes
-- **Real-Time Updates**: Process wires whenever you click Refresh
-- **Full Undo/Redo Support**: All wire display changes can be undone and redone
-- **Auto-Restore**: Automatically restores original display when wires are shortened below threshold or removed
-- **Debug Logging**: Optional debug mode with detailed logging to Rhino command history
-- **Simple and Reliable**: No complex event handling - just click to refresh!
+Place **Hopper Wire** from **Params > Util** on a Grasshopper canvas. Its inputs are:
 
-## Component
+| Input | Default | Effect |
+| --- | ---: | --- |
+| Faint Threshold | 800 | Longer wires become faint |
+| Hidden Threshold | 1500 | Longer wires become hidden |
+| Spatial Grid Size | 200 | Cell size used to find crossing candidates |
+| Auto Update | true | Recheck when the active canvas changes or the document's modified flag changes |
+| Refresh | false | Recheck on a false-to-true transition |
+| Debug | false | Include processing details in the Log output |
 
-### Wire Display Manager
-- **Category**: VibeTest > Display
-- **Inputs**:
-  - `Faint Threshold` (Number): Wire length threshold for faint display in pixels (default: 300)
-  - `Hidden Threshold` (Number): Wire length threshold for hidden display in pixels (default: 900)
-  - `Refresh` (Boolean): **Click this button to refresh wire displays!** (toggle to refresh)
-  - `Debug` (Boolean): Enable debug logging (default: false)
-- **Outputs**:
-  - `Status` (Text): Current status message
-  - `Log` (Text): Debug log messages
+Lengths and grid sizes use canvas coordinates. Thresholds must be finite and nonnegative, Hidden must be at least Faint, and Grid must be positive.
 
-## How It Works
+## Display rules
 
-1. Place **Wire Display Manager** component on your Grasshopper canvas
-2. Set **Faint Threshold** (default: 300px) for when wires should become faint
-3. Set **Hidden Threshold** (default: 900px) for when wires should be completely hidden
-4. Optional: Set **Debug** to true for detailed logging
-5. **Click Refresh button** (toggle false → true) to process all wires!
-6. The component will:
-   - Scan all wire connections in document
-   - Calculate straight-line distance between connected component centers
-   - **Length ≤ 300px**: Normal display (default thickness)
-   - **300px < Length ≤ 900px**: Set to "Faint" display
-   - **Length > 900px**: Set to "Hidden" display
-   - Record all changes for undo/redo
-7. Move components, add new ones, then **click Refresh again** to update!
+HopperWire measures an approximate Bézier curve length between parameter grips. A length **above Hidden Threshold** hides the connection; a length **above Faint Threshold** faints it. Equality does not cross either threshold.
 
-## Display Modes
+At or below Faint Threshold, any of these layout conditions makes a connection faint:
 
-- **Default** (length ≤ 300px): Normal wire display with default thickness ✅ NOW RESTORES CORRECTLY
-- **Faint** (300px < length ≤ 900px): Thin, transparent wires
-- **Hidden** (length > 900px): Wires completely invisible
+- It crosses another distinct wire and is the more vertical of the two. Equal-angle crossings and shared source or target endpoints are ignored.
+- It enters or leaves an explicit Grasshopper group, or connects objects in groups with no shared membership. Connections between two ungrouped objects, or within any shared group, keep their other computed style.
+- Its source output grip lies to the right of its target input grip, creating a backward path.
+- Its sampled curve passes through the interior of an unrelated component's bounds. Touching an edge does not count.
 
-## Using the Refresh Button
+Only length can make a new wire **hidden**. Group, backward, and through-component rules apply only to inputs with one source. Grasshopper has one display setting per target parameter, even if several sources connect to it, so HopperWire chooses the most restrictive result among their length and crossing results: **hidden > faint > default**. Crossing and curve measurements are approximate.
 
-The Refresh button is a boolean input:
-- Start with it set to `false`
-- Click it to change it to `true` → This triggers wire processing!
-- It will automatically process wires once when toggled
-- Toggle back to `false` and then to `true` to refresh again
-- Or just change the threshold values → This also triggers a refresh!
+When a wire no longer needs a changed display, HopperWire restores the parameter's prior setting while the component is active. It retains wire display changes if the component is removed. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records. HopperWire does not save documents automatically.
 
-## Debug Mode
+Auto Update observes changes on the active canvas. In a headless or inactive canvas, use Refresh or recompute the component to apply changes.
 
-When **Debug** is set to `true`, the plugin logs all activities:
-- Initialization and configuration changes
-- Every wire that gets modified (Faint or Hidden)
-- Wires that are restored
-- Processing statistics
+## Build
 
-Debug messages are:
-1. Shown in the `Log` output parameter
-2. Written to Rhino command history (can be viewed with `Echo` command)
-
-Example debug output:
-```
-[14:32:15.127] Document has 45 objects
-[14:32:15.128]   Objects by type:
-[14:32:15.129]     Components: 12
-[14:32:15.130]     Parameters: 33
-[14:32:15.131] Collected 30 unique connections
-[14:32:15.789] Processed 30 unique connections
-[14:32:15.790]   Modified: 5 connections
-[14:32:15.791]   Wire Number -> Curve: 950.5px > 900.0px = HIDDEN
-[14:32:15.792]   Wire Point -> List: 350.3px > 300.0px = FAINT
-[14:32:15.793]   Wire List -> Panel: 180.7px > 300.0px = FAINT
-```
-
-## Technical Details
-
-- **Comprehensive Connection Detection**: Collects ALL unique source->target connections from ALL parameters ✅ IMPROVED
-- **NO Exclusion**: Now processes ALL wires including plugin's own inputs ✅ CHANGED
-- **Duplicate Prevention**: Uses unique connection IDs to avoid processing same wire twice
-- **Proper Restoration**: Correctly restores wires to default display when below threshold
-- **Wire Length Calculation**: Straight-line distance between parameter centers (pixels)
-- **Display Modes**: Uses `GH_ParamWireDisplay.faint` and `GH_ParamWireDisplay.hidden` and `GH_ParamWireDisplay.default`
-- **Manual Trigger**: No event listening - just click Refresh to process!
-- **Undo/Redo**: Uses built-in `GH_WireDisplayAction` for proper undo support
-- **Performance**: Process on-demand only - no background monitoring overhead
-- **Debug Mode**: Shows detailed information about all connections found and document structure when enabled
-
-## Building
-
-```bash
-dotnet build
-```
-
-The build will produce `.gha` files for each target framework:
-- `bin/Debug/net48/VibeTest.gha` (Rhino 6/7)
-- `bin/Debug/net7.0/VibeTest.gha` (Rhino 8 Mac)
-- `bin/Debug/net7.0-windows/VibeTest.gha` (Rhino 8 Windows)
-
-**Note**: Close Rhino before rebuilding if the plugin is loaded!
-
-## Installation
-
-1. Copy the appropriate `.gha` file for your Rhino version to the Grasshopper libraries folder:
-   - **Rhino 6**: `%AppData%\Roaming\Grasshopper\Libraries\`
-   - **Rhino 7**: `%AppData%\Roaming\Grasshopper\Libraries\`
-   - **Rhino 8**: `%AppData%\Roaming\McNeel\Rhinoceros\8.0\Plug-ins\Grasshopper\`
-
-2. Restart Grasshopper
-3. Find the component in the **VibeTest > Display** tab
-
-## Usage Example
-
-```
-┌───────────────────────────┐
-│   Wire Display Manager    │
-├───────────────────────────┤
-│ Faint Threshold: 300      │
-│ Hidden Threshold: 900     │
-│ Refresh: [false] → [true] │ ← Click this!
-│ Debug: false             │
-├───────────────────────────┤
-│ Status: Processed 8      │
-│ wires, 3 modified         │
-│ (Faint > 300.0px,        │
-│ Hidden > 900.0px)          │
-├───────────────────────────┤
-│ Log:                     │
-│ (empty when debug off)   │
-└───────────────────────────┘
-```
-
-## Workflow
-
-1. **Set up your definition** in Grasshopper
-2. **Place Wire Display Manager** component
-3. **Configure thresholds** (Faint: 300, Hidden: 900)
-4. **Enable Debug mode** (optional) to see what's being processed
-5. **Click Refresh** to apply wire display changes
-6. **Check Debug Log** to see:
-   - Document structure (how many components/parameters)
-   - Which parameters are being excluded
-   - Details of every wire connection
-7. **Move components around** - wires won't update until you click Refresh
-8. **Click Refresh again** - all wire displays update!
-9. **Adjust thresholds** if needed → Auto-refreshes
-8. **Toggle Debug** on to see what's happening
-
-## Advantages of Manual Trigger
-
-✅ **No complex event handling** - simpler and more reliable
-✅ **Predictable behavior** - only updates when you want it to
-✅ **No performance overhead** - no background monitoring
-✅ **Easy to control** - refresh exactly when needed
-✅ **Works in all scenarios** - won't miss events or cause issues
-
-## Threshold Guidelines
-
-Recommended threshold values (pixels):
-- **Faint**: 200-400 pixels - Good for medium to large-sized definitions (default: 300)
-- **Hidden**: 600-1200 pixels - For very long connections that cross large canvas areas (default: 900)
-- **Large definitions**: Increase thresholds to 400-800 for faint, 1000-1500 for hidden
-- **Compact definitions**: Decrease to 100-200 for faint, 300-500 for hidden
-
-## Tips
-
-- Start with higher thresholds to see the effect, then adjust downward
-- Use Debug mode when first setting up to understand wire lengths
-- Hidden wires are useful for very long connections that clutter the canvas
-- Faint wires reduce visual noise while still showing connectivity
-- All display changes are recorded for undo/redo
-- Debug logging writes to both output parameter and Rhino command history
-- Component doesn't need to stay on canvas for wire changes to persist
-- Close Rhino before rebuilding the plugin
-
-## Notes
-
-- Wire length is calculated as straight-line distance between component centers
-- **ALL wires are now processed**, including plugin's own inputs - no exclusions!
-- Hidden wires are completely invisible (not shown even when selected)
-- All display changes are recorded for undo/redo
-- Debug logging writes to both output parameter and Rhino command history
-- Manual trigger mode means wires only update when you click Refresh
-- Close Rhino before rebuilding to avoid file lock errors
-
-## License
-
-Part of the VibeTest project.
+Run `dotnet restore` and `dotnet build HopperWire.csproj`. Run the layout rule checks with `dotnet run --project tests/WireLayoutRules.Tests.csproj`. The plugin targets `net48`, `net7.0`, and `net7.0-windows` and produces a `.gha` for each framework. The project references the Grasshopper 8 NuGet package, so test the resulting plugin in the matching Rhino/Grasshopper environment before distributing it.

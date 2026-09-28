@@ -4,10 +4,9 @@ version: 0.5.0
 authors:
   - aectooling by tomoS
 description: >
-  HopperWire is a Grasshopper plugin that manually triggers wire display 
-  updates based on length thresholds, with full undo/redo support and 
-  debug logging. It allows users to set separate thresholds for Faint and 
-  Hidden display modes and refresh wire displays on demand.
+  HopperWire adjusts Grasshopper wire display based on curve length, crossings,
+  group boundaries, backward paths, and paths through components. It supports
+  automatic canvas updates, manual refresh, and configurable thresholds.
 url: https://github.com/tsoumdoa/HopperWire
 icon: icon.png
 keywords:
