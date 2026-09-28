@@ -1,8 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Special;
 
 namespace HopperWire
 {
@@ -14,12 +13,9 @@ namespace HopperWire
         private WireMonitor _monitor;
         private GH_Document _monitorDocument;
         private GH_Document _document;
-        private readonly Dictionary<Guid, RectangleF> _bounds = new Dictionary<Guid, RectangleF>();
-        private readonly HashSet<(Guid, Guid)> _connections = new HashSet<(Guid, Guid)>();
-        private readonly HashSet<(Guid, Guid)> _groupMembership = new HashSet<(Guid, Guid)>();
+        private (string Path, long WriteTicks, long Length)? _lastSavedFile;
         private double _lastFaint = DefaultFaint, _lastHidden = DefaultHidden, _lastGrid = DefaultGrid;
         private bool _lastDebug, _lastRefresh, _autoUpdate, _processing, _saving;
-        private bool _snapshotReady;
         private string _processError;
 
         public HopperWire() : base("Hopper Wire", "HopperWire",
@@ -52,8 +48,10 @@ namespace HopperWire
             da.GetData(4, ref refresh);
             da.GetData(5, ref debug);
             if (!Finite(faint) || faint < 0 || !Finite(hidden) || hidden < faint ||
-                !Finite(grid) || grid <= 0 || grid > float.MaxValue)
+                !Finite(grid) || (float)grid <= 0 || grid > float.MaxValue)
             {
+                _autoUpdate = false;
+                Unsubscribe();
                 const string message = "Use finite thresholds with 0 <= Faint <= Hidden and a positive grid size.";
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, message);
                 da.SetData(0, message);
@@ -105,6 +103,7 @@ namespace HopperWire
             {
                 Unsubscribe();
                 _document = doc;
+                _lastSavedFile = GetFileStamp(doc);
                 doc.ModifiedChanged += OnModifiedChanged;
             }
         }
@@ -113,9 +112,7 @@ namespace HopperWire
         {
             if (_document != null) _document.ModifiedChanged -= OnModifiedChanged;
             _document = null;
-            _bounds.Clear(); _connections.Clear();
-            _groupMembership.Clear();
-            _snapshotReady = false;
+            _lastSavedFile = null;
         }
 
         private void OnModifiedChanged(object sender, GH_DocModifiedEventArgs e)
@@ -123,9 +120,26 @@ namespace HopperWire
             var doc = sender as GH_Document;
             if (e.Modified || !_autoUpdate || _processing || _saving || Locked ||
                 doc == null || doc != _document || doc != OnPingDocument()) return;
-            if (!HasCanvasChanged(doc) || !Process(doc, true) || _monitor.GetModifiedCount() == 0)
+            var stamp = GetFileStamp(doc);
+            if (stamp == null || stamp == _lastSavedFile) return;
+            _lastSavedFile = stamp;
+            if (!Process(doc, true) || _monitor.GetModifiedCount() == 0)
                 return;
             SaveAfterUpdate(doc);
+        }
+
+        private static (string Path, long WriteTicks, long Length)? GetFileStamp(GH_Document doc)
+        {
+            if (string.IsNullOrEmpty(doc.FilePath)) return null;
+            try
+            {
+                var file = new FileInfo(doc.FilePath);
+                return file.Exists ? (file.FullName, file.LastWriteTimeUtc.Ticks, file.Length) :
+                    ((string Path, long WriteTicks, long Length)?)null;
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+            catch (ArgumentException) { return null; }
         }
 
         private void SaveAfterUpdate(GH_Document doc)
@@ -145,6 +159,7 @@ namespace HopperWire
                         if (grasshopper == null) throw new InvalidOperationException("Grasshopper save service is unavailable.");
                         if (!grasshopper.SaveDocument())
                             throw new InvalidOperationException("Grasshopper did not save the document.");
+                        _lastSavedFile = GetFileStamp(doc);
                     }
                     catch (Exception ex)
                     {
@@ -168,58 +183,6 @@ namespace HopperWire
             ScheduleOutputs(doc);
         }
 
-        private bool HasCanvasChanged(GH_Document doc)
-        {
-            var bounds = new Dictionary<Guid, RectangleF>();
-            var connections = new HashSet<(Guid, Guid)>();
-            var groupMembership = new HashSet<(Guid, Guid)>();
-            foreach (var obj in doc.Objects)
-            {
-                if (obj == null) continue;
-                if (obj.Attributes != null) bounds[obj.InstanceGuid] = obj.Attributes.Bounds;
-                if (obj is GH_Group group)
-                    foreach (var memberId in group.ObjectIDs)
-                        groupMembership.Add((group.InstanceGuid, memberId));
-                if (obj is IGH_Param param) CollectConnections(param, connections);
-                if (obj is IGH_Component component)
-                {
-                    foreach (var input in component.Params.Input)
-                    {
-                        if (input.Attributes != null) bounds[input.InstanceGuid] = input.Attributes.Bounds;
-                        CollectConnections(input, connections);
-                    }
-                    foreach (var output in component.Params.Output)
-                    {
-                        if (output.Attributes != null) bounds[output.InstanceGuid] = output.Attributes.Bounds;
-                        CollectConnections(output, connections);
-                    }
-                }
-            }
-            bool changed = !_snapshotReady || bounds.Count != _bounds.Count || !connections.SetEquals(_connections) ||
-                           !groupMembership.SetEquals(_groupMembership);
-            if (!changed)
-                foreach (var entry in bounds)
-                    if (!_bounds.TryGetValue(entry.Key, out var old) || old != entry.Value)
-                    {
-                        changed = true;
-                        break;
-                    }
-            _bounds.Clear();
-            foreach (var entry in bounds) _bounds.Add(entry.Key, entry.Value);
-            _connections.Clear();
-            _connections.UnionWith(connections);
-            _groupMembership.Clear();
-            _groupMembership.UnionWith(groupMembership);
-            _snapshotReady = true;
-            return changed;
-        }
-
-        private static void CollectConnections(IGH_Param target, HashSet<(Guid, Guid)> connections)
-        {
-            foreach (var source in target.Sources)
-                if (source != null) connections.Add((source.InstanceGuid, target.InstanceGuid));
-        }
-
         private bool Process(GH_Document doc, bool updateOutputs)
         {
             if (_processing || _monitor == null) return false;
@@ -228,12 +191,10 @@ namespace HopperWire
                 _processing = true;
                 _processError = null;
                 _monitor.ProcessAllWires();
-                if (_autoUpdate) HasCanvasChanged(doc);
                 return true;
             }
             catch (Exception ex)
             {
-                _snapshotReady = false;
                 _processError = ex.Message;
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, _processError);
                 return false;

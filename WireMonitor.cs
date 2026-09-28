@@ -14,41 +14,12 @@ namespace HopperWire
         public IGH_Param Target { get; set; }
         public IGH_Param Source { get; set; }
         public PointF P0 { get; set; } // Start point
-        public PointF P1 { get; set; } // Control point 1
-        public PointF P2 { get; set; } // Control point 2
         public PointF P3 { get; set; } // End point
         public RectangleF Bounds { get; set; }
         public double Length { get; set; }
         public double Horizontalness { get; set; } // Angle in degrees (0 = horizontal, 90 = vertical)
-        public int Segments { get; set; } = 15;
-        private PointF[] _segmentPoints;
-        
-        public PointF[] GetSegmentPoints()
-        {
-            if (_segmentPoints != null) return _segmentPoints;
-            var points = new PointF[Segments + 1];
-            for (int i = 0; i <= Segments; i++)
-            {
-                double t = (double)i / Segments;
-                points[i] = EvaluateBezier(t);
-            }
-            _segmentPoints = points;
-            return _segmentPoints;
-        }
-        
-        private PointF EvaluateBezier(double t)
-        {
-            double mt = 1 - t;
-            double mt2 = mt * mt;
-            double mt3 = mt2 * mt;
-            double t2 = t * t;
-            double t3 = t2 * t;
-
-            float x = (float)(mt3 * P0.X + 3 * mt2 * t * P1.X + 3 * mt * t2 * P2.X + t3 * P3.X);
-            float y = (float)(mt3 * P0.Y + 3 * mt2 * t * P1.Y + 3 * mt * t2 * P2.Y + t3 * P3.Y);
-
-            return new PointF(x, y);
-        }
+        public PointF[] SegmentPoints { get; set; }
+        public int Segments => SegmentPoints.Length - 1;
     }
     
     internal class SpatialGrid
@@ -246,9 +217,6 @@ namespace HopperWire
 
             // Build wire info list for crossing detection
             var wireInfos = BuildWireInfoList(allConnections);
-            var wireLengths = new Dictionary<(Guid, Guid), double>();
-            foreach (var wire in wireInfos)
-                wireLengths.Add((wire.Source.InstanceGuid, wire.Target.InstanceGuid), wire.Length);
             var layoutFaintReasons = FindLayoutFaintReasons(wireInfos);
             
             if (_debug)
@@ -370,10 +338,9 @@ namespace HopperWire
             }
 
             // Now process each unique connection with crossing info
-            foreach (var kvp in allConnections)
+            foreach (var wire in wireInfos)
             {
-                wireLengths.TryGetValue((kvp.Value.InstanceGuid, kvp.Key.InstanceGuid), out var length);
-                ProcessConnection(kvp.Key, kvp.Value, length, targetModes, targets,
+                ProcessConnection(wire.Target, wire.Source, wire.Length, targetModes, targets,
                     wiresToFaintFromCrossing, layoutFaintReasons);
             }
 
@@ -387,8 +354,10 @@ namespace HopperWire
             foreach (var wire in new List<KeyValuePair<Guid, GH_ParamWireDisplay>>(_modifiedWires))
             {
                 if (targetModes.ContainsKey(wire.Key)) continue;
-                if (_document.FindObject(wire.Key, false) is IGH_Param param &&
-                    _appliedModes.TryGetValue(wire.Key, out var applied) && param.WireDisplay == applied)
+                var param = _document.FindObject(wire.Key, false) as IGH_Param;
+                if (param != null && param.SourceCount > 0) continue;
+                if (param != null && _appliedModes.TryGetValue(wire.Key, out var applied) &&
+                    param.WireDisplay == applied)
                 {
                     RestoreWireDisplay(param, wire.Value);
                     _modifiedCount++;
@@ -495,7 +464,7 @@ namespace HopperWire
                         if (component.Id == sourceOwner || component.Id == targetOwner ||
                             !component.Bounds.IntersectsWith(wire.Bounds))
                             continue;
-                        if (WireLayoutRules.PassesThroughRectangle(wire.GetSegmentPoints(), component.Bounds))
+                        if (WireLayoutRules.PassesThroughRectangle(wire.SegmentPoints, component.Bounds))
                         {
                             throughComponent = true;
                             break;
@@ -550,9 +519,7 @@ namespace HopperWire
                     p2 = new PointF(p3.X + (float)controlOffset, p3.Y);
                 }
                 
-                double length = CalculateBezierLength(p0, p1, p2, p3, 20);
-                
-                // Calculate bounding box by sampling the actual curve
+                // Use the same curve samples for length, bounds, and intersections.
                 var samplePoints = new PointF[21];
                 for (int i = 0; i <= 20; i++)
                 {
@@ -562,9 +529,13 @@ namespace HopperWire
                 
                 float minX = samplePoints[0].X, maxX = samplePoints[0].X;
                 float minY = samplePoints[0].Y, maxY = samplePoints[0].Y;
+                double length = 0;
                 
                 for (int i = 1; i < samplePoints.Length; i++)
                 {
+                    double segmentX = samplePoints[i].X - samplePoints[i - 1].X;
+                    double segmentY = samplePoints[i].Y - samplePoints[i - 1].Y;
+                    length += Math.Sqrt(segmentX * segmentX + segmentY * segmentY);
                     minX = Math.Min(minX, samplePoints[i].X);
                     maxX = Math.Max(maxX, samplePoints[i].X);
                     minY = Math.Min(minY, samplePoints[i].Y);
@@ -585,12 +556,11 @@ namespace HopperWire
                     Source = source,
                     Target = target,
                     P0 = p0,
-                    P1 = p1,
-                    P2 = p2,
                     P3 = p3,
                     Bounds = bounds,
                     Length = length,
-                    Horizontalness = horizontalAngle
+                    Horizontalness = horizontalAngle,
+                    SegmentPoints = samplePoints
                 });
                 
                 if (_debug)
@@ -607,8 +577,8 @@ namespace HopperWire
         
         private bool WiresIntersect(WireInfo wire1, WireInfo wire2)
         {
-            var segments1 = wire1.GetSegmentPoints();
-            var segments2 = wire2.GetSegmentPoints();
+            var segments1 = wire1.SegmentPoints;
+            var segments2 = wire2.SegmentPoints;
             
             if (_debug)
             {
@@ -725,28 +695,6 @@ namespace HopperWire
                     }
                 }
             }
-        }
-
-        private double CalculateBezierLength(PointF p0, PointF p1, PointF p2, PointF p3, int segments)
-        {
-            if (segments < 1) segments = 1;
-
-            double totalLength = 0;
-            PointF prevPoint = p0;
-
-            for (int i = 1; i <= segments; i++)
-            {
-                double t = (double)i / segments;
-                PointF currentPoint = EvaluateBezier(p0, p1, p2, p3, t);
-
-                double dx = currentPoint.X - prevPoint.X;
-                double dy = currentPoint.Y - prevPoint.Y;
-                totalLength += Math.Sqrt(dx * dx + dy * dy);
-
-                prevPoint = currentPoint;
-            }
-
-            return totalLength;
         }
 
         private PointF EvaluateBezier(PointF p0, PointF p1, PointF p2, PointF p3, double t)
