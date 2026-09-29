@@ -119,6 +119,9 @@ namespace HopperWire
         private StringBuilder _debugLog;
         private int _wireCount;
         private int _modifiedCount;
+        private long _stateRevisionBeforeProcessing;
+
+        public bool HasStateChanges => _displayState.Revision != _stateRevisionBeforeProcessing;
 
         public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, float spatialGridSize, bool debug, bool skipUndo, WireDisplayState displayState)
         {
@@ -157,6 +160,7 @@ namespace HopperWire
         {
             if (_document == null) return;
 
+            _stateRevisionBeforeProcessing = _displayState.Revision;
             _debugLog.Clear();
             var targetModes = new Dictionary<Guid, GH_ParamWireDisplay>();
             var targets = new Dictionary<Guid, IGH_Param>();
@@ -353,16 +357,11 @@ namespace HopperWire
             {
                 if (targetModes.ContainsKey(id)) continue;
                 var param = _document.FindParameter(id);
-                if (param != null && param.SourceCount > 0) continue;
-                if (param != null && _displayState.TryGetOriginal(id, param.WireDisplay, out var original))
-                {
-                    RestoreWireDisplay(param, original);
-                    _modifiedCount++;
-                }
-                _displayState.Remove(id);
+                if (param == null) _displayState.Remove(id);
+                else if (param.SourceCount == 0) ApplyTargetMode(param, GH_ParamWireDisplay.@default);
             }
 
-            if (_modifiedCount > 0)
+            if (_modifiedCount > 0 || HasStateChanges)
                 _document.IsModified = true;
             
             if (_debug)
@@ -642,13 +641,9 @@ namespace HopperWire
 
         private void ApplyTargetMode(IGH_Param target, GH_ParamWireDisplay mode)
         {
-            mode = _displayState.Resolve(target.InstanceGuid, target.WireDisplay, mode);
-
-            if (target.WireDisplay != mode)
-            {
-                SetWireDisplay(target, mode);
+            if (_displayState.Apply(target.InstanceGuid, target.WireDisplay, mode,
+                value => SetWireDisplay(target, value)))
                 _modifiedCount++;
-            }
         }
 
         private void AddParamConnections(IGH_Param param, List<KeyValuePair<IGH_Param, IGH_Param>> connections,
@@ -695,20 +690,6 @@ namespace HopperWire
             }
 
             param.WireDisplay = newMode;
-        }
-
-        private void RestoreWireDisplay(IGH_Param param, GH_ParamWireDisplay originalMode)
-        {
-            if (param == null || _document == null) return;
-
-            if (!_skipUndo)
-            {
-                var record = new GH_UndoRecord("Restore Wire Display");
-                record.AddAction(new GH_WireDisplayAction(param));
-                _document.UndoServer.PushUndoRecord(record);
-            }
-
-            param.WireDisplay = originalMode;
         }
 
     }
