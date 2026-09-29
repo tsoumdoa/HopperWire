@@ -30,7 +30,9 @@ At or below Faint Threshold, any of these layout conditions makes a connection f
 
 Only length can make a new wire **hidden**. Group, backward, and through-component rules apply only to inputs with one source. Grasshopper has one display setting per target parameter, even if several sources connect to it, so HopperWire chooses the most restrictive result among their length and crossing results: **hidden > faint > default**. Crossing and curve measurements are approximate.
 
-When a wire no longer needs a changed display, HopperWire restores the parameter's prior setting while the component is active. A user's more restrictive display choice is preserved. It retains wire display changes if the component is removed. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records.
+When a wire no longer needs a changed display, HopperWire restores the parameter's prior setting while the component is active. It saves both the original and applied settings with the component, so this also works after reopening the document. A user's more restrictive display choice is preserved. It retains wire display changes if the component is removed. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records.
+
+Files saved by older versions do not record which styles HopperWire applied. Those existing styles are preserved as user choices; set affected inputs' wire display back to Default once, then use Refresh to let HopperWire manage them again.
 
 Auto Update checks the layout after a save. If that check changes wire displays, HopperWire saves the document again to persist them. Use Refresh for an immediate update without saving.
 

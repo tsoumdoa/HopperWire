@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using HopperWire;
+using GH_IO.Serialization;
+using Grasshopper.Kernel;
 
 int assertions = 0;
 void Check(bool condition, string description)
@@ -33,4 +35,62 @@ Check(!WireLayoutRules.PassesThroughRectangle(new[] { new PointF(0, 5), new Poin
 Check(!WireLayoutRules.PassesThroughRectangle(new[] { new PointF(0, 0), new PointF(20, 0) }, node), "Passing above component");
 Check(!WireLayoutRules.PassesThroughRectangle(new[] { new PointF(0, 0), new PointF(5, 5) }, node), "Touching component corner");
 
-Console.WriteLine($"Passed {assertions} wire layout assertions.");
+WireDisplayState Reopen(WireDisplayState state, bool binary = false)
+{
+    var saved = new GH_LooseChunk("HopperWire");
+    state.Write(saved);
+    var loaded = new GH_LooseChunk("HopperWire");
+    if (binary) loaded.Deserialize_Binary(saved.Serialize_Binary());
+    else loaded.Deserialize_Xml(saved.Serialize_Xml());
+    var reopened = new WireDisplayState();
+    reopened.Read(loaded);
+    return reopened;
+}
+
+foreach (bool binary in new[] { false, true })
+{
+    var id = Guid.NewGuid();
+    var state = new WireDisplayState();
+    var mode = state.Resolve(id, GH_ParamWireDisplay.@default, GH_ParamWireDisplay.hidden);
+    Check(mode == GH_ParamWireDisplay.hidden, "Long wire becomes hidden");
+    state = Reopen(state, binary);
+    mode = state.Resolve(id, mode, GH_ParamWireDisplay.faint);
+    Check(mode == GH_ParamWireDisplay.faint, "Reopened hidden wire becomes faint after moving closer");
+    state = Reopen(state, binary);
+    mode = state.Resolve(id, mode, GH_ParamWireDisplay.@default);
+    Check(mode == GH_ParamWireDisplay.@default, "Reopened wire restores default after moving closer again");
+    Check(state.ManagedTargets.Count == 0, "Restored wire releases ownership");
+
+    state.Resolve(id, GH_ParamWireDisplay.faint, GH_ParamWireDisplay.hidden);
+    state = Reopen(state, binary);
+    Check(state.Resolve(id, GH_ParamWireDisplay.hidden, GH_ParamWireDisplay.@default) == GH_ParamWireDisplay.faint,
+        "Reopening preserves a user's original faint setting");
+
+    state.Resolve(id, GH_ParamWireDisplay.@default, GH_ParamWireDisplay.faint);
+    state = Reopen(state, binary);
+    Check(state.Resolve(id, GH_ParamWireDisplay.hidden, GH_ParamWireDisplay.@default) == GH_ParamWireDisplay.hidden,
+        "Manual hidden override survives reopening and refresh");
+    Check(state.ManagedTargets.Count == 0, "Manual override releases ownership");
+
+    state.Resolve(id, GH_ParamWireDisplay.@default, GH_ParamWireDisplay.hidden);
+    state = Reopen(state, binary);
+    Check(state.TryGetOriginal(id, GH_ParamWireDisplay.hidden, out var original) && original == GH_ParamWireDisplay.@default,
+        "Disconnected target can restore its original display after reopening");
+    Check(!state.TryGetOriginal(id, GH_ParamWireDisplay.faint, out _), "Disconnect cleanup respects manual changes");
+}
+
+var legacy = new WireDisplayState();
+legacy.Read(new GH_LooseChunk("HopperWire"));
+Check(legacy.Resolve(Guid.NewGuid(), GH_ParamWireDisplay.hidden, GH_ParamWireDisplay.@default) == GH_ParamWireDisplay.hidden,
+    "Legacy files retain display settings when ownership is unknown");
+var live = new WireDisplayState();
+var liveId = Guid.NewGuid();
+var liveMode = GH_ParamWireDisplay.@default;
+foreach (var requested in new[] { GH_ParamWireDisplay.hidden, GH_ParamWireDisplay.faint, GH_ParamWireDisplay.@default,
+    GH_ParamWireDisplay.faint, GH_ParamWireDisplay.hidden, GH_ParamWireDisplay.@default })
+{
+    liveMode = live.Resolve(liveId, liveMode, requested);
+    Check(liveMode == requested, "Repeated moves update display in the same session");
+}
+
+Console.WriteLine($"Passed {assertions} wire layout and display-state assertions.");

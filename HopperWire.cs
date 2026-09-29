@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using GH_IO.Serialization;
 using Grasshopper.Kernel;
 
 namespace HopperWire
@@ -11,6 +12,7 @@ namespace HopperWire
         private const double DefaultHidden = 1500;
         private const double DefaultGrid = 200;
         private WireMonitor _monitor;
+        private readonly WireDisplayState _displayState = new WireDisplayState();
         private GH_Document _monitorDocument;
         private GH_Document _document;
         private (string Path, long WriteTicks, long Length)? _lastSavedFile;
@@ -78,7 +80,8 @@ namespace HopperWire
             if (newMonitor)
             {
                 _monitor?.Dispose();
-                _monitor = new WireMonitor(doc, faint, hidden, (float)grid, debug, auto);
+                if (_monitorDocument != null && _monitorDocument != doc) _displayState.Clear();
+                _monitor = new WireMonitor(doc, faint, hidden, (float)grid, debug, auto, _displayState);
                 _monitorDocument = doc;
             }
             else if (settingsChanged || autoChanged)
@@ -96,6 +99,22 @@ namespace HopperWire
         }
 
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+
+        public override bool Write(GH_IWriter writer)
+        {
+            _displayState.Write(writer);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            Unsubscribe();
+            _monitor?.Dispose();
+            _monitor = null;
+            _monitorDocument = null;
+            _displayState.Read(reader);
+            return base.Read(reader);
+        }
 
         private void Subscribe(GH_Document doc)
         {
@@ -218,6 +237,7 @@ namespace HopperWire
             _monitor?.Dispose();
             _monitor = null;
             _monitorDocument = null;
+            _displayState.Clear();
             base.RemovedFromDocument(doc);
         }
 

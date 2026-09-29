@@ -115,13 +115,12 @@ namespace HopperWire
         private float _spatialGridSize;
         private bool _debug;
         private bool _skipUndo;
-        private Dictionary<Guid, GH_ParamWireDisplay> _modifiedWires;
-        private Dictionary<Guid, GH_ParamWireDisplay> _appliedModes;
+        private readonly WireDisplayState _displayState;
         private StringBuilder _debugLog;
         private int _wireCount;
         private int _modifiedCount;
 
-        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, float spatialGridSize, bool debug, bool skipUndo = false)
+        public WireMonitor(GH_Document document, double faintThreshold, double hiddenThreshold, float spatialGridSize, bool debug, bool skipUndo, WireDisplayState displayState)
         {
             _document = document;
             _faintThreshold = faintThreshold;
@@ -129,8 +128,7 @@ namespace HopperWire
             _spatialGridSize = spatialGridSize;
             _debug = debug;
             _skipUndo = skipUndo;
-            _modifiedWires = new Dictionary<Guid, GH_ParamWireDisplay>();
-            _appliedModes = new Dictionary<Guid, GH_ParamWireDisplay>();
+            _displayState = displayState;
             _debugLog = new StringBuilder();
             _wireCount = 0;
             _modifiedCount = 0;
@@ -351,19 +349,17 @@ namespace HopperWire
                 ApplyTargetMode(targets[mode.Key], mode.Value);
             }
 
-            foreach (var wire in new List<KeyValuePair<Guid, GH_ParamWireDisplay>>(_modifiedWires))
+            foreach (var id in _displayState.ManagedTargets)
             {
-                if (targetModes.ContainsKey(wire.Key)) continue;
-                var param = _document.FindObject(wire.Key, false) as IGH_Param;
+                if (targetModes.ContainsKey(id)) continue;
+                var param = _document.FindParameter(id);
                 if (param != null && param.SourceCount > 0) continue;
-                if (param != null && _appliedModes.TryGetValue(wire.Key, out var applied) &&
-                    param.WireDisplay == applied)
+                if (param != null && _displayState.TryGetOriginal(id, param.WireDisplay, out var original))
                 {
-                    RestoreWireDisplay(param, wire.Value);
+                    RestoreWireDisplay(param, original);
                     _modifiedCount++;
                 }
-                _modifiedWires.Remove(wire.Key);
-                _appliedModes.Remove(wire.Key);
+                _displayState.Remove(id);
             }
 
             if (_modifiedCount > 0)
@@ -394,8 +390,6 @@ namespace HopperWire
         public void Dispose()
         {
             // Wire styles are document data and must survive removal of this component.
-            _modifiedWires.Clear();
-            _appliedModes.Clear();
             _document = null;
         }
 
@@ -648,34 +642,12 @@ namespace HopperWire
 
         private void ApplyTargetMode(IGH_Param target, GH_ParamWireDisplay mode)
         {
-            var id = target.InstanceGuid;
-            bool wasManaged = _modifiedWires.TryGetValue(id, out var saved);
-            if (!wasManaged && mode == GH_ParamWireDisplay.@default)
-                return; // A short wire must not erase a user's existing display choice.
-            var original = wasManaged ? saved : target.WireDisplay;
-            if (_appliedModes.TryGetValue(id, out var applied) && target.WireDisplay != applied)
-                original = target.WireDisplay; // A user changed this parameter since our last pass.
-
-            if (mode == GH_ParamWireDisplay.@default)
-                mode = original;
-            else if (mode < original)
-                mode = original; // Keep a user's more restrictive display choice.
+            mode = _displayState.Resolve(target.InstanceGuid, target.WireDisplay, mode);
 
             if (target.WireDisplay != mode)
             {
                 SetWireDisplay(target, mode);
                 _modifiedCount++;
-            }
-
-            if (mode == original)
-            {
-                _modifiedWires.Remove(id);
-                _appliedModes.Remove(id);
-            }
-            else
-            {
-                _modifiedWires[id] = original;
-                _appliedModes[id] = mode;
             }
         }
 
