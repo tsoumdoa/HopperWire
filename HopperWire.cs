@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.IO;
+using GH_IO.Serialization;
 using Grasshopper.Kernel;
 
 namespace HopperWire
@@ -11,12 +12,14 @@ namespace HopperWire
         private const double DefaultHidden = 1500;
         private const double DefaultGrid = 200;
         private WireMonitor _monitor;
+        private readonly WireDisplayState _displayState = new WireDisplayState();
         private GH_Document _monitorDocument;
         private GH_Document _document;
         private (string Path, long WriteTicks, long Length)? _lastSavedFile;
         private double _lastFaint = DefaultFaint, _lastHidden = DefaultHidden, _lastGrid = DefaultGrid;
         private bool _lastDebug, _lastRefresh, _autoUpdate, _processing, _saving;
         private string _processError;
+        private const string ControllerConflict = "Multiple unlocked HopperWire components: lock or remove extras to resume wire updates.";
 
         public HopperWire() : base("Hopper Wire", "HopperWire",
             "Manage wire display by length and canvas layout", "Params", "Util") { }
@@ -65,7 +68,6 @@ namespace HopperWire
                 da.SetData(1, "");
                 return;
             }
-
             bool settingsChanged = faint != _lastFaint || hidden != _lastHidden ||
                                    grid != _lastGrid || debug != _lastDebug;
             bool autoChanged = auto != _autoUpdate;
@@ -73,12 +75,13 @@ namespace HopperWire
             _lastFaint = faint; _lastHidden = hidden; _lastGrid = grid;
             _lastDebug = debug; _lastRefresh = refresh; _autoUpdate = auto;
 
-            // A monitor keeps the original display modes while settings change.
+            // Keep tracking managed targets while settings change.
             bool newMonitor = _monitor == null || _monitorDocument != doc;
             if (newMonitor)
             {
                 _monitor?.Dispose();
-                _monitor = new WireMonitor(doc, faint, hidden, (float)grid, debug, auto);
+                if (_monitorDocument != null && _monitorDocument != doc) _displayState.Clear();
+                _monitor = new WireMonitor(doc, faint, hidden, (float)grid, debug, auto, _displayState);
                 _monitorDocument = doc;
             }
             else if (settingsChanged || autoChanged)
@@ -86,7 +89,18 @@ namespace HopperWire
 
             if (auto) Subscribe(doc);
             else Unsubscribe();
-            if (settingsChanged || refreshTriggered || (auto && (newMonitor || autoChanged)))
+            // Stay subscribed during conflicts so the next save can resume after they are resolved.
+            bool wasConflict = _processError == ControllerConflict;
+            if (HasControllerConflict(doc))
+            {
+                _processError = ControllerConflict;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ControllerConflict);
+                da.SetData(0, ControllerConflict);
+                da.SetData(1, "");
+                return;
+            }
+            if (wasConflict) _processError = null;
+            if (settingsChanged || refreshTriggered || (auto && (newMonitor || autoChanged || wasConflict)))
                 Process(doc, false);
             da.SetData(0, _processError == null
                 ? $"Processed {_monitor.GetWireCount()} wires, {_monitor.GetModifiedCount()} changed" +
@@ -96,6 +110,31 @@ namespace HopperWire
         }
 
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
+
+        private static bool HasControllerConflict(GH_Document doc)
+        {
+            int count = 0;
+            foreach (var obj in doc.Objects)
+                if (obj is HopperWire controller && !controller.Locked && ++count > 1)
+                    return true;
+            return false;
+        }
+
+        public override bool Write(GH_IWriter writer)
+        {
+            _displayState.Write(writer);
+            return base.Write(writer);
+        }
+
+        public override bool Read(GH_IReader reader)
+        {
+            Unsubscribe();
+            _monitor?.Dispose();
+            _monitor = null;
+            _monitorDocument = null;
+            _displayState.Read(reader);
+            return base.Read(reader);
+        }
 
         private void Subscribe(GH_Document doc)
         {
@@ -123,7 +162,7 @@ namespace HopperWire
             var stamp = GetFileStamp(doc);
             if (stamp == null || stamp == _lastSavedFile) return;
             _lastSavedFile = stamp;
-            if (!Process(doc, true) || _monitor.GetModifiedCount() == 0)
+            if (!Process(doc, true) || (_monitor.GetModifiedCount() == 0 && !_monitor.HasStateChanges))
                 return;
             SaveAfterUpdate(doc);
         }
@@ -151,7 +190,7 @@ namespace HopperWire
                 {
                     try
                     {
-                        if (doc != OnPingDocument() || !_autoUpdate) return;
+                        if (doc != OnPingDocument() || !_autoUpdate || Locked || HasControllerConflict(doc)) return;
                         if (Grasshopper.Instances.ActiveCanvas?.Document != doc)
                             throw new InvalidOperationException("This document is no longer active.");
                         var grasshopper = Rhino.RhinoApp.GetPlugInObject("Grasshopper")
@@ -185,7 +224,15 @@ namespace HopperWire
 
         private bool Process(GH_Document doc, bool updateOutputs)
         {
-            if (_processing || _monitor == null) return false;
+            if (_processing || _monitor == null || Locked) return false;
+            // Also guard save callbacks, which can run before another component solves.
+            if (HasControllerConflict(doc))
+            {
+                _processError = ControllerConflict;
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, ControllerConflict);
+                if (updateOutputs) ScheduleOutputs(doc);
+                return false;
+            }
             try
             {
                 _processing = true;
@@ -218,6 +265,7 @@ namespace HopperWire
             _monitor?.Dispose();
             _monitor = null;
             _monitorDocument = null;
+            _displayState.Clear();
             base.RemovedFromDocument(doc);
         }
 

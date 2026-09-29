@@ -30,9 +30,13 @@ At or below Faint Threshold, any of these layout conditions makes a connection f
 
 Only length can make a new wire **hidden**. Group, backward, and through-component rules apply only to inputs with one source. Grasshopper has one display setting per target parameter, even if several sources connect to it, so HopperWire chooses the most restrictive result among their length and crossing results: **hidden > faint > default**. Crossing and curve measurements are approximate.
 
-When a wire no longer needs a changed display, HopperWire restores the parameter's prior setting while the component is active. A user's more restrictive display choice is preserved. It retains wire display changes if the component is removed. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records.
+Each processing pass applies the display computed from the current layout and thresholds, including returning short, clear connections to Default. Manual display changes last until the next processing pass; HopperWire does not infer or preserve user preferences. Removing the component retains the last applied wire displays. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records. The next pass recomputes displays after undo too.
 
-Auto Update checks the layout after a save. If that check changes wire displays, HopperWire saves the document again to persist them. Use Refresh for an immediate update without saving.
+HopperWire saves managed input IDs and their last applied displays with the component. Previously managed inputs that become disconnected reset to Default, including after reopening. They remain tracked while they exist so undo cannot leave a disconnected input stuck on an old style. Deleted inputs are dropped from the records. Older files are supported: connected inputs are recomputed on the next pass without a manual reset, and any saved original-setting preferences are ignored.
+
+Use one unlocked HopperWire component per document. If several are unlocked, updates pause with a warning until the extras are locked or removed. This prevents components with different thresholds from overwriting each other's results. After resolving a conflict, use Refresh if Auto Update is off.
+
+Auto Update checks the layout after a save. If that check changes wire displays or managed-input records, HopperWire saves the document again to persist them. Use Refresh for an immediate update without saving.
 
 ## Build
 
