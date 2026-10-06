@@ -8,7 +8,7 @@
       "args": [
         "build",
         "-clp:NoSummary",
-        "${workspaceFolder}/VibeTest.csproj"
+        "${workspaceFolder}/HopperWire.csproj"
       ],
       "problemMatcher": "$msCompile",
       "presentation": {

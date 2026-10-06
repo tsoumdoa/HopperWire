@@ -103,10 +103,10 @@ namespace HopperWire
             if (settingsChanged || refreshTriggered || (auto && (newMonitor || autoChanged || wasConflict)))
                 Process(doc, false);
             da.SetData(0, _processError == null
-                ? $"Processed {_monitor.GetWireCount()} wires, {_monitor.GetModifiedCount()} changed" +
+                ? $"Processed {_monitor.WireCount} wires, {_monitor.ModifiedCount} changed" +
                   (auto ? " (Auto update ON)" : "")
                 : $"Error: {_processError}");
-            da.SetData(1, _monitor.GetDebugLog());
+            da.SetData(1, _monitor.DebugLog);
         }
 
         private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
@@ -162,7 +162,7 @@ namespace HopperWire
             var stamp = GetFileStamp(doc);
             if (stamp == null || stamp == _lastSavedFile) return;
             _lastSavedFile = stamp;
-            if (!Process(doc, true) || (_monitor.GetModifiedCount() == 0 && !_monitor.HasStateChanges))
+            if (!Process(doc, true) || (_monitor.ModifiedCount == 0 && !_monitor.HasStateChanges))
                 return;
             SaveAfterUpdate(doc);
         }
