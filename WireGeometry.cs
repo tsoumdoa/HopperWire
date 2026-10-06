@@ -21,8 +21,8 @@ namespace HopperWire
             // Collinear overlap and degenerate segments have no transverse crossing.
             if (denominator == 0) return false;
             double dx = (double)b[j].X - a[i].X, dy = (double)b[j].Y - a[i].Y;
-            double t = (dx * by - dy * bx) / denominator;
-            double u = (dx * ay - dy * ax) / denominator;
+            double t = SnapToBoundary((dx * by - dy * bx) / denominator);
+            double u = SnapToBoundary((dx * ay - dy * ax) / denominator);
             if (t < 0 || t > 1 || u < 0 || u > 1 ||
                 (i == 0 && t == 0) || (i == a.Length - 2 && t == 1) ||
                 (j == 0 && u == 0) || (j == b.Length - 2 && u == 1))
@@ -35,13 +35,24 @@ namespace HopperWire
             var aAfter = t == 1 ? a[i + 2] : a[i + 1];
             var bBefore = u == 0 ? b[j - 1] : b[j];
             var bAfter = u == 1 ? b[j + 2] : b[j + 1];
-            double x = a[i].X + t * ax, y = a[i].Y + t * ay;
+            // Use the actual vertex so interpolation cannot create a spurious outgoing ray.
+            var vertex = t == 0 ? a[i] : t == 1 ? a[i + 1] : u == 0 ? b[j] : b[j + 1];
+            double x = vertex.X, y = vertex.Y;
             double a1 = Math.Atan2(aBefore.Y - y, aBefore.X - x);
             double a2 = Math.Atan2(aAfter.Y - y, aAfter.X - x);
             double b1 = Math.Atan2(bBefore.Y - y, bBefore.X - x);
             double b2 = Math.Atan2(bAfter.Y - y, bAfter.X - x);
             if (a1 == b1 || a1 == b2 || a2 == b1 || a2 == b2) return false;
             return Between(b1, a1, a2) != Between(b2, a1, a2);
+        }
+
+        private static double SnapToBoundary(double parameter)
+        {
+            // Dimensionless tolerance for double arithmetic, well below PointF precision.
+            const double tolerance = 1e-12;
+            if (Math.Abs(parameter) <= tolerance) return 0;
+            if (Math.Abs(parameter - 1) <= tolerance) return 1;
+            return parameter;
         }
 
         private static bool Between(double angle, double first, double second)

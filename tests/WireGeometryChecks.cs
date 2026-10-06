@@ -7,6 +7,20 @@ internal static class WireGeometryChecks
     public static void Run(Action<bool, string> check)
     {
         WirePath Path(PointF start, PointF end) => new WirePath(Guid.NewGuid(), Guid.NewGuid(), start, end);
+        void CheckIntersection(PointF[] first, PointF[] second, bool expected, string description)
+        {
+            foreach (bool reverseFirst in new[] { false, true })
+                foreach (bool reverseSecond in new[] { false, true })
+                {
+                    var a = (PointF[])first.Clone();
+                    var b = (PointF[])second.Clone();
+                    if (reverseFirst) Array.Reverse(a);
+                    if (reverseSecond) Array.Reverse(b);
+                    check(WireGeometry.PathsIntersect(a, b) == expected &&
+                        WireGeometry.PathsIntersect(b, a) == expected,
+                        $"{description} (reverse first: {reverseFirst}, reverse second: {reverseSecond})");
+                }
+        }
         var horizontal = Path(new PointF(-100, 0), new PointF(100, 0));
         var vertical = Path(new PointF(0, -50), new PointF(0, 50));
         var backward = Path(new PointF(100, 0), new PointF(-100, 0));
@@ -21,8 +35,8 @@ internal static class WireGeometryChecks
         check(curved.Length > Math.Sqrt(200 * 200 + 100 * 100), "Curve length includes curvature");
         check(degenerate.Length == 0 && degenerate.Bounds.Width == 4 && degenerate.Bounds.Height == 4,
             "Coincident grips yield zero length and padded bounds");
-        foreach (var sample in curved.SegmentPoints)
-            check(curved.Bounds.Contains(sample), "Bounds contain every curve sample");
+        check(Array.TrueForAll(curved.SegmentPoints, sample => curved.Bounds.Contains(sample)),
+            "Bounds contain every curve sample");
 
         var straight = new[] { new PointF(-10, 0), new PointF(10, 0) };
         var split = new[] { new PointF(0, -10), new PointF(0, 0), new PointF(0, 10) };
@@ -45,19 +59,34 @@ internal static class WireGeometryChecks
         var bent = new[] { new PointF(-4, -8), PointF.Empty, new PointF(8, 4) };
         var crossingBend = new[] { new PointF(-8, 4), PointF.Empty, new PointF(4, -8) };
         var touchingBend = new[] { new PointF(-8, -4), PointF.Empty, new PointF(-4, -8) };
-        foreach (bool reverseFirst in new[] { false, true })
-            foreach (bool reverseSecond in new[] { false, true })
-            {
-                var a = (PointF[])bent.Clone();
-                var b = (PointF[])crossingBend.Clone();
-                var touch = (PointF[])touchingBend.Clone();
-                if (reverseFirst) Array.Reverse(a);
-                if (reverseSecond) { Array.Reverse(b); Array.Reverse(touch); }
-                check(WireGeometry.PathsIntersect(a, b) && WireGeometry.PathsIntersect(b, a),
-                    "Bent sample-vertex crossings survive reversing either path");
-                check(!WireGeometry.PathsIntersect(a, touch) && !WireGeometry.PathsIntersect(touch, a),
-                    "Bent vertex touches survive reversing either path");
-            }
+        CheckIntersection(bent, crossingBend, true, "Bent sample-vertex crossing");
+        CheckIntersection(bent, touchingBend, false, "Bent vertex touch");
+
+        // Fractional coordinates exposed rounding that made an endpoint look internal.
+        var fractional = Path(new PointF(-152.92151f, 159.67607f), new PointF(156.6576f, -126.55176f));
+        var endpointTouch = Path(new PointF(-38.725285f, -79.27755f), fractional.SegmentPoints[10]);
+        CheckIntersection(fractional.SegmentPoints, endpointTouch.SegmentPoints, false,
+            "Fractional sampled endpoint touch is ignored");
+        check(WireCrossings.FindTargetsToFaint(new[] { fractional, endpointTouch }, 800, 200).Count == 0 &&
+            WireCrossings.FindTargetsToFaint(new[] { endpointTouch, fractional }, 800, 200).Count == 0,
+            "An endpoint touch never faints a target, regardless of input order");
+
+        var fractionalVertex = new PointF(-960.39197f, 11.501407f);
+        var fractionalBend = new[] { new PointF(-151.46242f, -4.4969206f), fractionalVertex,
+            new PointF(-406.19473f, 277.71793f) };
+        var fractionalTouch = new[] { new PointF(441.72308f, 968.89465f), fractionalVertex,
+            new PointF(119.18919f, -162.84651f) };
+        CheckIntersection(fractionalBend, fractionalTouch, false,
+            "Fractional bent vertex touch is ignored");
+        var fractionalCrossing = new[] { new PointF(441.72308f, 968.89465f), fractionalVertex,
+            new PointF(119.18919f, 100.84651f) };
+        CheckIntersection(fractionalBend, fractionalCrossing, true,
+            "Fractional bent vertex crossing is preserved");
+
+        var nearEndpointCrossing = new[] { new PointF(0, -0.000001f), new PointF(0, 10) };
+        var nearEndpointMiss = new[] { new PointF(0, 0.000001f), new PointF(0, 10) };
+        CheckIntersection(straight, nearEndpointCrossing, true, "Crossing close to an endpoint is preserved");
+        CheckIntersection(straight, nearEndpointMiss, false, "Near miss close to an endpoint stays clear");
 
         var crossings = WireCrossings.FindTargetsToFaint(new[] { horizontal, vertical }, 800, 20);
         check(crossings.SetEquals(new[] { vertical.TargetId }), "Sampled curves faint the more vertical target");
@@ -92,8 +121,8 @@ internal static class WireGeometryChecks
             grid.Insert(Path(new PointF(1000, 1000), new PointF(1100, 1000)));
             check(grid.Query(new RectangleF(-1, -1, 2, 2)).SetEquals(new[] { horizontal, vertical }),
                 "Grid query deduplicates candidates and excludes remote bounds, including fallback");
-            check(grid.Query(new RectangleF(-200, -200, 400, 400)).SetEquals(new[] { horizontal, vertical }),
-                "Large query fallback returns the same candidates");
+            check(grid.Query(new RectangleF(-650, -650, 1300, 1300)).SetEquals(new[] { horizontal, vertical }),
+                "Broad query excludes remote bounds, including the 4096-cell fallback");
             check(WireCrossings.FindTargetsToFaint(new[] { horizontal, vertical }, 800, cellSize)
                 .SetEquals(new[] { vertical.TargetId }), "Crossing decisions survive extreme grid sizes");
         }
@@ -113,14 +142,17 @@ internal static class WireGeometryChecks
             check(rejected, "Grid rejects invalid cell size");
         }
 
-        foreach (WireDecision first in Enum.GetValues(typeof(WireDecision)))
-            foreach (WireDecision second in Enum.GetValues(typeof(WireDecision)))
-            {
-                var expected = first > second ? first : second;
-                check(WireLayoutRules.MostRestrictive(first, second) == expected &&
-                    WireLayoutRules.MostRestrictive(second, first) == expected,
-                    "Multi-source display aggregation is restrictive and independent of order");
-            }
+        // State the display policy explicitly rather than repeat the implementation's comparison.
+        var decisions = new[] { WireDecision.Default, WireDecision.Faint, WireDecision.Hidden };
+        var expectedModes = new[,] {
+            { WireDecision.Default, WireDecision.Faint, WireDecision.Hidden },
+            { WireDecision.Faint, WireDecision.Faint, WireDecision.Hidden },
+            { WireDecision.Hidden, WireDecision.Hidden, WireDecision.Hidden }
+        };
+        for (int i = 0; i < decisions.Length; i++)
+            for (int j = 0; j < decisions.Length; j++)
+                check(WireLayoutRules.MostRestrictive(decisions[i], decisions[j]) == expectedModes[i, j],
+                    $"Display priority for {decisions[i]} and {decisions[j]}");
         var hidden = WireLayoutRules.DecideDisplay(1600, 800, 1500, false);
         var faint = WireLayoutRules.DecideDisplay(100, 800, 1500, true);
         var clear = WireLayoutRules.DecideDisplay(100, 800, 1500, false);
