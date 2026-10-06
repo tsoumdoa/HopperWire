@@ -9,7 +9,7 @@
   </PropertyGroup>
   
   <PropertyGroup>
-    <Version>0.6.1</Version>
+    <Version>0.6.2</Version>
     <Title>HopperWire</Title>
     <Company>AECTooling</Company>
     <Description>Description of HopperWire</Description>
