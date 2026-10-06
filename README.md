@@ -41,3 +41,9 @@ Auto Update checks the layout after a save. If that check changes wire displays 
 ## Build
 
 Run `dotnet restore` and `dotnet build HopperWire.csproj`. Run the layout rule checks with `dotnet run --project tests/WireLayoutRules.Tests.csproj`. The plugin targets `net48`, `net7.0`, and `net7.0-windows` and produces a `.gha` for each framework. The project references the Grasshopper 8 NuGet package, so test the resulting plugin in the matching Rhino/Grasshopper environment before distributing it.
+
+## Package
+
+Run `pwsh -File scripts/Package.ps1` to build the Release `net7.0` plugin and generate a Rhino 8 package under `artifacts/yak/`. The script stages the plugin, root icon, and `yak/manifest.yml` in a fresh directory and checks that the project and manifest versions match. It uses Yak from your PATH or the standard Rhino 8 Windows installation; pass `-YakPath` for another installation. Use `-StageOnly` to prepare the files without Yak.
+
+Generated plugins, icon copies, and packages stay out of source control. Download released packages from [GitHub releases](https://github.com/tsoumdoa/HopperWire/releases). The 0.4.0 and 0.5.0 packages remain in `yak/` as historical copies because their availability outside this repository has not been verified.

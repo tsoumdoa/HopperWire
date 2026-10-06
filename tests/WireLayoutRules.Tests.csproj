@@ -9,6 +9,10 @@
   <ItemGroup>
     <Compile Include="../WireLayoutRules.cs" Link="WireLayoutRules.cs" />
     <Compile Include="../WireDisplayState.cs" Link="WireDisplayState.cs" />
+    <Compile Include="../WirePath.cs" Link="WirePath.cs" />
+    <Compile Include="../WireGeometry.cs" Link="WireGeometry.cs" />
+    <Compile Include="../SpatialGrid.cs" Link="SpatialGrid.cs" />
+    <Compile Include="../WireCrossings.cs" Link="WireCrossings.cs" />
     <PackageReference Include="Grasshopper" Version="8.0.23304.9001" />
     <PackageReference Include="System.Drawing.Common" Version="7.0.0" />
   </ItemGroup>

@@ -158,4 +158,5 @@ recovered.Read(damaged);
 Check(recovered.ManagedTargets.Count == 1 && recovered.ManagedTargets.Contains(sharedId),
     "Malformed records and bogus counts do not prevent reading valid targets");
 
-Console.WriteLine($"Passed {assertions} wire layout and display-state assertions.");
+WireGeometryChecks.Run(Check);
+Console.WriteLine($"Passed {assertions} wire geometry, layout and display-state assertions.");

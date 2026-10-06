@@ -8,6 +8,11 @@ namespace HopperWire
 
     internal static class WireLayoutRules
     {
+        public static WireDecision MostRestrictive(WireDecision first, WireDecision second)
+        {
+            return first > second ? first : second;
+        }
+
         public static WireDecision DecideDisplay(double length, double faintThreshold,
             double hiddenThreshold, bool faintForLayout)
         {
