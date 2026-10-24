@@ -26,8 +26,8 @@ namespace HopperWire
 
         protected override void RegisterInputParams(GH_InputParamManager p)
         {
-            p.AddNumberParameter("Faint Threshold", "Faint", "Faint above this canvas length", GH_ParamAccess.item, DefaultFaint);
-            p.AddNumberParameter("Hidden Threshold", "Hidden", "Hide above this canvas length", GH_ParamAccess.item, DefaultHidden);
+            p.AddNumberParameter("Faint Threshold", "Faint", "Faint above this canvas length; connections at or below it prevent ordinary hiding on their input", GH_ParamAccess.item, DefaultFaint);
+            p.AddNumberParameter("Hidden Threshold", "Hidden", "Hide above this canvas length unless the input has a nearby connection; crossing X = 0 or Y = 0 always hides", GH_ParamAccess.item, DefaultHidden);
             p.AddNumberParameter("Spatial Grid Size", "Grid", "Cell size for crossing detection", GH_ParamAccess.item, DefaultGrid);
             p.AddBooleanParameter("Auto Update", "Auto", "Check for layout changes when the document is saved", GH_ParamAccess.item, true);
             p.AddBooleanParameter("Refresh", "Refresh", "Toggle false to true to update", GH_ParamAccess.item, false);

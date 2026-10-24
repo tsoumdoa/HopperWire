@@ -6,6 +6,28 @@ namespace HopperWire
 {
     internal enum WireDecision { Default, Faint, Hidden }
 
+    internal sealed class WireTargetDecision
+    {
+        private WireDecision _mode;
+        private bool _hasNearbyConnection;
+        private bool _crossesCoordinateAxes;
+
+        public WireDecision Mode => _crossesCoordinateAxes ? WireDecision.Hidden :
+            _hasNearbyConnection && _mode == WireDecision.Hidden ? WireDecision.Faint : _mode;
+
+        public WireDecision Add(WirePath wire, double faintThreshold, double hiddenThreshold,
+            bool faintForLayout, int connectionCount)
+        {
+            bool crossesAxes = WireLayoutRules.CrossesCoordinateAxes(wire.P0, wire.P3);
+            var decision = WireLayoutRules.DecideDisplay(wire.Length, faintThreshold, hiddenThreshold,
+                faintForLayout, connectionCount, crossesAxes);
+            _mode = WireLayoutRules.MostRestrictive(_mode, decision);
+            _hasNearbyConnection |= wire.Length <= faintThreshold;
+            _crossesCoordinateAxes |= crossesAxes;
+            return decision;
+        }
+    }
+
     internal static class WireLayoutRules
     {
         public static WireDecision MostRestrictive(WireDecision first, WireDecision second)
@@ -14,11 +36,25 @@ namespace HopperWire
         }
 
         public static WireDecision DecideDisplay(double length, double faintThreshold,
-            double hiddenThreshold, bool faintForLayout)
+            double hiddenThreshold, bool faintForLayout, int connectionCount = 1,
+            bool crossesCoordinateAxes = false)
         {
-            if (length > hiddenThreshold) return WireDecision.Hidden;
-            if (length > faintThreshold || faintForLayout) return WireDecision.Faint;
+            if (crossesCoordinateAxes) return WireDecision.Hidden;
+            if (length > faintThreshold && (length > hiddenThreshold || connectionCount > 8))
+                return WireDecision.Hidden;
+            if (length > faintThreshold || faintForLayout || connectionCount > 3)
+                return WireDecision.Faint;
             return WireDecision.Default;
+        }
+
+        public static bool CrossesCoordinateAxes(PointF sourceGrip, PointF targetGrip)
+        {
+            return OppositeSigns(sourceGrip.X, targetGrip.X) || OppositeSigns(sourceGrip.Y, targetGrip.Y);
+        }
+
+        private static bool OppositeSigns(float first, float second)
+        {
+            return (first < 0 && second > 0) || (first > 0 && second < 0);
         }
 
         public static bool IsBackward(PointF sourceGrip, PointF targetGrip)
