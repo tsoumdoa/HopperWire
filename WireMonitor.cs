@@ -83,23 +83,30 @@ namespace HopperWire
             }
             var layoutReasons = FindLayoutFaintReasons(wires);
             var crossingTargets = WireCrossings.FindTargetsToFaint(wires, _faintThreshold, _spatialGridSize);
-            var targets = new Dictionary<Guid, (IGH_Param Target, WireDecision Mode)>();
+            var targets = new Dictionary<Guid, (IGH_Param Target, WireTargetDecision Decision)>();
             foreach (var wire in wires)
             {
                 bool crossing = crossingTargets.Contains(wire.TargetId);
                 bool layout = layoutReasons.TryGetValue(wire.TargetId, out var reason);
-                var mode = WireLayoutRules.DecideDisplay(wire.Length, _faintThreshold, _hiddenThreshold,
-                    crossing || layout);
-                LogDecision(wire, mode, crossing, reason);
-                if (targets.TryGetValue(wire.TargetId, out var previous))
-                    mode = WireLayoutRules.MostRestrictive(previous.Mode, mode);
-                targets[wire.TargetId] = (wire.Target, mode);
+                int connectionCount = Math.Max(wire.Source.Recipients?.Count ?? 0, wire.Target.SourceCount);
+                if (!targets.TryGetValue(wire.TargetId, out var target))
+                {
+                    target = (wire.Target, new WireTargetDecision());
+                    targets.Add(wire.TargetId, target);
+                }
+                var mode = target.Decision.Add(wire, _faintThreshold, _hiddenThreshold,
+                    crossing || layout, connectionCount);
+                LogDecision(wire, mode, crossing, reason, connectionCount);
             }
             WireCount = wires.Count;
 
             // Grasshopper has one display per input; aggregate all incoming paths first.
             foreach (var target in targets.Values)
-                ApplyTargetMode(target.Target, ToDisplay(target.Mode));
+            {
+                ApplyTargetMode(target.Target, ToDisplay(target.Decision.Mode));
+                if (_debug)
+                    _debugLog.AppendLine($"Input {target.Target.NickName}: final {target.Decision.Mode}");
+            }
 
             // ManagedTargets is a snapshot: cleanup can remove deleted entries as it iterates.
             foreach (var id in _displayState.ManagedTargets)
@@ -121,14 +128,19 @@ namespace HopperWire
             _document = null;
         }
 
-        private void LogDecision(WireInfo wire, WireDecision decision, bool crossing, string layoutReason)
+        private void LogDecision(WireInfo wire, WireDecision decision, bool crossing, string layoutReason,
+            int connectionCount)
         {
             if (!_debug) return;
-            string reason = wire.Length > _faintThreshold ? "length" :
-                (crossing ? "crossing" : "") + (crossing && layoutReason != null ? ", " : "") + layoutReason;
+            var reasons = new List<string>();
+            if (WireLayoutRules.CrossesCoordinateAxes(wire.P0, wire.P3)) reasons.Add("coordinate axis crossing");
+            if (wire.Length > _faintThreshold) reasons.Add("length");
+            if (connectionCount > 3) reasons.Add($"{connectionCount} connections");
+            if (crossing) reasons.Add("wire crossing");
+            if (!string.IsNullOrEmpty(layoutReason)) reasons.Add(layoutReason);
             _debugLog.AppendLine($"{wire.Source.NickName} -> {wire.Target.NickName}: " +
                 $"{wire.Length:F1}px, {wire.Horizontalness:F1} degrees = {decision}" +
-                (reason.Length > 0 ? $" ({reason})" : ""));
+                (reasons.Count > 0 ? $" ({string.Join(", ", reasons)})" : ""));
         }
 
         private Dictionary<Guid, string> FindLayoutFaintReasons(List<WireInfo> wires)

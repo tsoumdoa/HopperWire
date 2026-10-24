@@ -1,12 +1,13 @@
 ---
 name: hopperwire
-version: 0.6.2
+version: 0.7.0
 authors:
   - aectooling by tomoS
 description: >
-  HopperWire adjusts Grasshopper wire display based on curve length, crossings,
-  group boundaries, backward paths, and paths through components. It supports
-  updates on document save, manual refresh, and configurable thresholds.
+  HopperWire adjusts Grasshopper wire display based on curve length, coordinate
+  axis crossings, connection counts, and canvas layout. Nearby connections stay
+  visible unless they cross an axis. It supports updates on document save,
+  manual refresh, and configurable thresholds.
 url: https://github.com/tsoumdoa/HopperWire
 icon: icon.png
 keywords:

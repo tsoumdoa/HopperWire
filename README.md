@@ -8,8 +8,8 @@ Place **Hopper Wire** from **Params > Util** on a Grasshopper canvas. Its inputs
 
 | Input | Default | Effect |
 | --- | ---: | --- |
-| Faint Threshold | 800 | Longer wires become faint |
-| Hidden Threshold | 1500 | Longer wires become hidden |
+| Faint Threshold | 800 | Longer wires become faint; connections at or below this length protect their input from ordinary hiding |
+| Hidden Threshold | 1500 | Longer wires become hidden unless their input has a nearby connection |
 | Spatial Grid Size | 200 | Cell size used to find crossing candidates |
 | Auto Update | true | Recheck layout when the Grasshopper document is saved |
 | Refresh | false | Recheck on a false-to-true transition |
@@ -19,7 +19,11 @@ Lengths and grid sizes use canvas coordinates. Thresholds must be finite and non
 
 ## Display rules
 
-HopperWire measures an approximate Bézier curve length between parameter grips. A length **above Hidden Threshold** hides the connection; a length **above Faint Threshold** faints it. Equality does not cross either threshold.
+Connections whose grips lie on opposite sides of **X = 0 or Y = 0** always become **hidden**, in either direction, regardless of length, connection count, or other rules. Crossing either axis is enough. A grip exactly on an axis does not count as crossing it.
+
+Otherwise, HopperWire measures an approximate Bézier curve length between parameter grips. A length **above Hidden Threshold** hides the connection; a length **above Faint Threshold** faints it. Equality does not cross either threshold.
+
+Connection count uses the larger of the source output's outgoing count and the target input's incoming count. **Above 3 connections** makes the wire at least faint. **Above 8 connections** hides it only when its length is also above Faint Threshold. At or below Faint Threshold, connection count can only make a wire faint, however many connections share the port.
 
 At or below Faint Threshold, any of these layout conditions makes a connection faint:
 
@@ -28,7 +32,13 @@ At or below Faint Threshold, any of these layout conditions makes a connection f
 - Its source output grip lies to the right of its target input grip, creating a backward path.
 - Its sampled curve passes through the interior of an unrelated component's bounds. Touching an edge does not count.
 
-Only length can make a new wire **hidden**. Group, backward, and through-component rules apply only to inputs with one source. Grasshopper has one display setting per target parameter, even if several sources connect to it, so HopperWire chooses the most restrictive result among their length and crossing results: **hidden > faint > default**. Crossing and curve measurements are approximate.
+Group, backward, and through-component rules apply only to inputs with one source. Grasshopper has one display setting per target parameter, even if several sources connect to it, so HopperWire combines their results as follows:
+
+- If any incoming connection crosses a coordinate axis, the entire input becomes **hidden**.
+- Otherwise, if any incoming connection is at or below Faint Threshold, the input stays visible: an otherwise-hidden result is capped at **faint**, including when another incoming wire is distant or a port has more than 8 connections.
+- Otherwise, the most restrictive result wins: **hidden > faint > default**.
+
+Crossing and curve measurements are approximate.
 
 Each processing pass applies the display computed from the current layout and thresholds, including returning short, clear connections to Default. Manual display changes last until the next processing pass; HopperWire does not infer or preserve user preferences. Removing the component retains the last applied wire displays. Changes made with Auto Update off are recorded in the Grasshopper undo stack; changes with Auto Update on do not add undo records. The next pass recomputes displays after undo too.
 

@@ -153,10 +153,5 @@ internal static class WireGeometryChecks
             for (int j = 0; j < decisions.Length; j++)
                 check(WireLayoutRules.MostRestrictive(decisions[i], decisions[j]) == expectedModes[i, j],
                     $"Display priority for {decisions[i]} and {decisions[j]}");
-        var hidden = WireLayoutRules.DecideDisplay(1600, 800, 1500, false);
-        var faint = WireLayoutRules.DecideDisplay(100, 800, 1500, true);
-        var clear = WireLayoutRules.DecideDisplay(100, 800, 1500, false);
-        check(WireLayoutRules.MostRestrictive(clear, WireLayoutRules.MostRestrictive(hidden, faint)) == WireDecision.Hidden,
-            "A hidden incoming path wins over a short crossing and a clear incoming path");
     }
 }
