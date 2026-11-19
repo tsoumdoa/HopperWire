@@ -11,7 +11,7 @@ namespace HopperWire
 
         public override string Description => "Wire display management plugin for Grasshopper";
 
-        public override string AuthorName => "AEC Tooling";
+        public override string AuthorName => "aectooling by tomoS";
 
         public override string AuthorContact => "";
 
